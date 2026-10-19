@@ -136,14 +136,6 @@ struct ProtectionCheck: Codable, Identifiable, Hashable {
     var detail: String
 }
 
-struct LaunchItem: Codable, Identifiable, Hashable {
-    var id: String { path }
-    var name: String
-    var path: String
-    var allUsers: Bool
-    /// Why it can't work, when its program no longer exists (nil for working items and older snapshots).
-    var broken: String? = nil
-}
 
 struct OutdatedCask: Codable, Identifiable, Hashable {
     var id: String { name }

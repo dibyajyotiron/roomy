@@ -109,23 +109,6 @@ enum ExtrasEngine {
         return items
     }
 
-    static func launchItems() -> [LaunchItem] {
-        ["~/Library/LaunchAgents", "/Library/LaunchAgents", "/Library/LaunchDaemons"].flatMap { d in
-            Paths.children(d).filter { $0.hasSuffix(".plist") }.map {
-                LaunchItem(name: (Paths.name($0) as NSString).deletingPathExtension, path: Paths.short($0), allUsers: !$0.hasPrefix(HOME), broken: brokenReason($0))
-            }
-        }
-    }
-
-    /// A login item is broken when the program it launches is gone, usually because its app was deleted by dragging it
-    /// to the Trash. Items that launch through a bundle identifier or a shell aren't judged.
-    static func brokenReason(_ plist: String) -> String? {
-        guard let d = NSDictionary(contentsOfFile: plist) as? [String: Any] else { return nil }
-        let program = (d["Program"] as? String) ?? (d["ProgramArguments"] as? [String])?.first
-        guard let p = program, p.hasPrefix("/"), !p.hasPrefix("/bin/"), !p.hasPrefix("/usr/bin/"), !p.hasPrefix("/System/") else { return nil }
-        return FileManager.default.fileExists(atPath: p) ? nil : "Its program is gone: \(Paths.short(p))"
-    }
-
     static func outdatedCasks() async -> [OutdatedCask] {
         var env = Shell.baseEnvironment
         env["HOMEBREW_NO_AUTO_UPDATE"] = "1"; env["HOMEBREW_NO_ANALYTICS"] = "1"

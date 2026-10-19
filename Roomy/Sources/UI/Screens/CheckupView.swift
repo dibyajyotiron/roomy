@@ -273,7 +273,7 @@ struct CheckupView: View {
 
     // MARK: the strip
 
-    var broken: Int { model.snap.launchItems.filter { $0.broken != nil }.count }
+    var broken: Int { model.snap.startup?.items.filter { $0.state == .broken }.count ?? 0 }
 
     var tiles: [ScanTile] {
         let s = model.snap

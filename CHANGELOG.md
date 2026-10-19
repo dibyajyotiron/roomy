@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1
+
+- Startup Items, rebuilt to match System Settings › Login Items & Extensions. Open at Login, then Allow in the
+  Background grouped by app or developer, each with its real state, read from launchd without a password. Read
+  Full List adds what only macOS's own list has (apps' background tasks, developer names); macOS asks for an
+  administrator's password first, and Roomy only reads it. Helpers that can't run (an unreadable file, a program
+  that's gone) and helpers switched off with launchctl behind System Settings' back are listed first.
+- Only actions that work are offered: Remove for your own launch agents (to the Trash), Turn Back On for what
+  launchctl switched off, and System Settings for the rest. The old switches turned helpers off with launchctl,
+  which System Settings never showed, so they're gone.
+
 ## 0.2.0
 
 - A new look. Each area has its own colours, which run through the whole window: the ground, icons, rows and

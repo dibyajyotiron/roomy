@@ -70,7 +70,8 @@ struct Snapshot: Codable {
     var photos: [PhotoGroup] = []
     var photosChecked = 0
     var protection: [ProtectionCheck] = []
-    var launchItems: [LaunchItem] = []
+    /// What starts with your Mac. Optional so snapshots from before 0.2.1 still open.
+    var startup: StartupReport?
     var outdated: [OutdatedCask] = []
     var artifacts: [Artifact] = []
     var installers: [CleanItem] = []
@@ -294,8 +295,22 @@ final class AppModel {
         for i in found where !known.contains(i.path) { if i.review || !AppsEngine.mayPreselect(i.path) { selection.remove(i.path) } else { selection.insert(i.path) } }
         snap.languageFiles = await AppsEngine.languageFiles(a.apps)
         snap.universalBinaries = await AppsEngine.universalBinaries(a.apps)
-        snap.launchItems = ExtrasEngine.launchItems()
+        snap.startup = await StartupEngine.scan(apps: snap.apps)
         snap.outdated = await ExtrasEngine.outdatedCasks()
+    }
+
+    /// macOS's full list of login and background items, which needs an administrator's permission (macOS asks in its
+    /// own dialog). Only when you ask; a scan never does.
+    var readingStartup = false
+    func readFullStartupList() async {
+        guard !Demo.on else { flash("The demo doesn't read this Mac's list."); return }
+        guard !readingStartup else { return }
+        readingStartup = true
+        defer { readingStartup = false }
+        guard let text = await StartupEngine.readFullList() else { flash("macOS's full list wasn't read. Nothing changed."); return }
+        let scan = await StartupEngine.scan(apps: snap.apps)
+        withAnimation(.snappy) { snap.startup = StartupEngine.merge(fullList: text, into: scan, apps: snap.apps) }
+        save()
     }
 
     func scanAI() async { snap.aiCare = await AICareEngine.scan(); preselectAI() }
