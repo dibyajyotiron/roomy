@@ -1,0 +1,22 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  roomy:
+    name: Build Roomy
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mole (bundled into the app)
+        run: brew install mole
+      - name: Build and package
+        run: Roomy/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Roomy-${{ github.sha }}
+          path: dist/*

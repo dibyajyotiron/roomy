@@ -1,0 +1,39 @@
+# macOS
+.DS_Store
+
+# Builds and releases
+Roomy/build
+build/
+dist/
+DerivedData/
+*.dmg
+*.zip
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+Roomy/Roomy.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local design notes and tooling
+DESIGN.md
+DESIGN.json
+PRODUCT.md
+.impeccable/
+.claude/
+
+# Credentials
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+
+# Signing keys never belong in the repository (the update key lives in the maintainer's Keychain)
+*.priv
+*.pem
+*.key
+*private*key*
+sparkle_private*
