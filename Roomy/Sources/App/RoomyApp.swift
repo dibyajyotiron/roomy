@@ -8,6 +8,7 @@ struct RoomyApp: App {
     init() {
         if let what = UserDefaults.standard.string(forKey: "RoomyMoleSelfTest") { MoleCheck.selfTest(what) }
         if let id = UserDefaults.standard.string(forKey: "RoomyLeftoverProbe") { LeftoverFinder.probe(id) }
+        if let since = UserDefaults.standard.string(forKey: "RoomyReadCleanLog") { Mole.readCleanLogTest(since) }
         // Testing aid: `open Roomy.app --args -RoomyAppearance light` (or dark) overrides the system appearance.
         switch UserDefaults.standard.string(forKey: "RoomyAppearance") {
         case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)

@@ -142,6 +142,7 @@ final class AppModel {
         } else {
             if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode(Snapshot.self, from: d) { snap = s; phase = .idle }   // Checkup always opens on the untidy room; the last results stay in each module
             for i in snap.history.indices where snap.history[i].title == "Smart Care" { snap.history[i].title = "Checkup" }   // its name in 0.0.1
+            repairEmptyCleans()
             snap.disk = ExtrasEngine.disk()
         }
         for i in snap.leftovers.indices where !AppsEngine.mayPreselect(snap.leftovers[i].path) { snap.leftovers[i].review = true }
@@ -153,6 +154,22 @@ final class AppModel {
                                       onOpen: { [weak self] in self?.route = .leftovers; NSApp.activate(); self?.openMainWindow?() })
         // Testing aid: `-RoomyRoute lens` opens on that screen.
         if let r = UserDefaults.standard.string(forKey: "RoomyRoute").flatMap(Route.init(rawValue:)) { route = r }
+    }
+
+    /// Cleans recorded as "0 items" because Mole 1.61 changed its log format before Roomy could read it: the real
+    /// numbers are still in Mole's log, so they're read again for History and the result shown in Checkup.
+    func repairEmptyCleans() {
+        for i in snap.history.indices {
+            let h = snap.history[i]
+            guard h.title == "Checkup", !h.simulated, h.items == 0, h.bytes == 0, (h.removed ?? []).isEmpty else { continue }
+            let run = Mole.readOperations(since: h.date.addingTimeInterval(-3600))
+            // Only the session that ended just before Roomy recorded this clean.
+            guard let end = run.ended, end <= h.date.addingTimeInterval(5), end >= h.date.addingTimeInterval(-120), run.count > 0 else { continue }
+            snap.history[i].bytes = run.freed
+            snap.history[i].items = run.count
+            snap.history[i].removed = Array(run.removed.map { Paths.short($0.path) + ($0.bytes > 0 ? " — \(Fmt.bytes($0.bytes))" : "") }.prefix(500))
+            if lastResult?.id == h.id { lastResult = snap.history[i] }
+        }
     }
 
     /// An app came back (put back from the Trash, or installed again): its files aren't leftovers any more.
@@ -424,7 +441,7 @@ final class AppModel {
         let sealed = run.failed.filter { ($0.path.hasPrefix("/var/folders/") || $0.path.hasPrefix("/private/var/folders/")) && $0.reason.lowercased().contains("permission") }
         let realFailures = run.failed.filter { f in !sealed.contains { $0.path == f.path } }
         rep.failures = realFailures.map { "\(Paths.short($0.path)) — \($0.reason)" } + rep.failures
-        if !run.ran && run.removed.isEmpty && !moleItems.isEmpty { rep.failures.insert("The clean didn't run, so nothing was removed. Scan again and retry.", at: 0) }
+        if !run.ran && run.count == 0 && !moleItems.isEmpty { rep.failures.insert("The clean didn't run, so nothing was removed. Scan again and retry.", at: 0) }
         withAnimation(.smooth) {
             // Mole's findings are gone or were protected by Mole; the next scan shows anything left.
             let kept = checkupSkip
@@ -437,7 +454,7 @@ final class AppModel {
         }
         snap.disk = ExtrasEngine.disk()
         let removedLines = run.removed.map { "\(Paths.short($0.path))" + ($0.bytes > 0 ? " — \(Fmt.bytes($0.bytes))" : "") } + rep.done
-        let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: freed + trashed, items: run.removed.count + rep.count, simulated: false,
+        let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: freed + trashed, items: run.count + rep.count, simulated: false,
                                  failures: rep.failures.isEmpty ? nil : rep.failures, trashed: trashed > 0 ? trashed : nil, removed: Array(removedLines.prefix(500)))
         snap.history.insert(entry, at: 0)
         lastResult = entry

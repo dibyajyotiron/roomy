@@ -167,7 +167,13 @@ enum Mole {
         var ran = false
         /// Mole's own total for the session (some removals are logged in batches without a size).
         var total: Int64?
+        /// Mole's own count of removed items, from the session's end line.
+        var reported: Int?
+        /// When the session started and ended, from Mole's log.
+        var started: Date?
+        var ended: Date?
         var freed: Int64 { total ?? removed.reduce(0) { $0 + $1.bytes } }
+        var count: Int { max(removed.count, reported ?? 0) }
     }
 
     /// Runs Mole's own user-level clean, the same pass its preview showed. Without a terminal Mole runs
@@ -197,26 +203,51 @@ enum Mole {
     }
 
     /// Reads the newest clean session in Mole's operations log that started at or after `since`.
+    /// Mole's operations log, both formats: Mole 1.61 tags every line with its run (`[clean run=<id>] REMOVED …`,
+    /// `clean run=<id> session started at …`); earlier versions wrote `[clean] REMOVED …`. Dry runs
+    /// (`clean-dry-run run=…`) are never read as a clean. With run IDs only that run's lines count, even if another
+    /// Mole was writing at the same time.
     static func readOperations(since: Date, log logPath: String = HOME + "/Library/Logs/mole/operations.log") -> CleanRun {
         var run = CleanRun()
         // Decoded leniently: one odd byte in a long log must not hide the whole session.
         guard let data = FileManager.default.contents(atPath: logPath) else { return run }
         let lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
         stamp.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        var runID: String?
         guard let start = lines.lastIndex(where: { l in
-            guard let m = l.firstMatch(#"clean session started at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#), let t = m[1], let d = stamp.date(from: t) else { return false }
-            return d >= since
+            guard let m = l.firstMatch(#"session started at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#), let t = m[1], let d = stamp.date(from: t), d >= since,
+                  let label = l.firstMatch(#"^#\s*=+\s*(clean(?: run=(\S+))?)\s+session started"#) else { return false }
+            runID = label[2] ?? nil
+            run.started = d
+            return true
         }) else { return run }
+        let tag = runID.map { "clean run=\($0)" } ?? "clean"
         for l in lines[(start + 1)...] {
-            if l.contains("session ended") {
+            if l.contains("\(tag) session ended") || (runID == nil && l.contains("session ended")) {
                 run.total = l.firstMatch(#",\s*([\d.]+\s*[KMGT]?B)\s*=*\s*$"#).flatMap { $0[1] }.flatMap { parseSize($0) }
+                run.reported = l.firstMatch(#",\s*(\d+) items?,"#).flatMap { $0[1] }.flatMap { Int($0) }
+                run.ended = l.firstMatch(#"session ended at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#).flatMap { $0[1] }.flatMap { stamp.date(from: $0) }
                 break
             }
-            guard let m = l.firstMatch(#"^\[[^\]]+\] \[clean\] (REMOVED|FAILED) (.+?)(?: \(([^()]*)\))?$"#), let act = m[1], let p = m[2] else { continue }
-            if act == "REMOVED" { run.removed.append((p, parseSize(m[3] ?? "") ?? 0)) } else { run.failed.append((p, m[3] ?? "error")) }
+            guard let m = l.firstMatch(#"^\[[^\]]+\] \[([^\]]+)\] (REMOVED|FAILED) (.+?)(?: \(([^()]*)\))?$"#), m[1] == tag,
+                  let act = m[2], let p = m[3] else { continue }
+            if act == "REMOVED" { run.removed.append((p, parseSize(m[4] ?? "") ?? 0)) } else { run.failed.append((p, m[4] ?? "error")) }
         }
         return run
+    }
+
+    /// Testing aid: `Roomy -RoomyReadCleanLog "2026-10-19 12:50:00"` prints what Roomy reads for the first real clean
+    /// after that time, then quits. It only reads Mole's log.
+    static func readCleanLogTest(_ since: String) -> Never {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let file = UserDefaults.standard.string(forKey: "RoomyReadCleanLogFile") ?? HOME + "/Library/Logs/mole/operations.log"
+        let r = readOperations(since: f.date(from: since) ?? .distantPast, log: file)
+        let out = "clean log: started \(r.started.map { f.string(from: $0) } ?? "-"), ended \(r.ended.map { f.string(from: $0) } ?? "-"), "
+            + "\(r.count) items (\(r.removed.count) lines), freed \(Fmt.bytes(r.freed)), \(r.failed.count) failed\n"
+        FileHandle.standardError.write(Data(out.utf8))
+        exit(0)
     }
 
     // MARK: purge, installers, uninstall, optimize
