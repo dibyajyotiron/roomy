@@ -105,7 +105,7 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 ditto Roomy/Resources/Room "$APP/Contents/Resources/Room"
 # Mole, bundled: Roomy cleans with Mole (GPL-3.0), so it ships the tested copy it was built against and needs no
 # separate install. Taken from Homebrew's Mole on the build machine; its entry script is pointed at its own libexec.
-MOLE_HOME=$(brew --prefix mole 2>/dev/null || true)
+MOLE_HOME=${MOLE_HOME:-$(brew --prefix mole 2>/dev/null || true)}   # CI sets MOLE_HOME (scripts/fetch-mole.sh)
 if [ -n "$MOLE_HOME" ] && [ -x "$MOLE_HOME/bin/mole" ]; then
   MOLE_HOME=$(cd "$MOLE_HOME" && pwd -P)
   mkdir -p "$APP/Contents/Resources/mole/bin"

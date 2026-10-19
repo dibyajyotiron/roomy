@@ -144,9 +144,13 @@ Open `Roomy.xcworkspace` in Xcode 26 to work on it there.
 1. Once per maintainer: `Vendor/Sparkle/bin/generate_keys --account roomy` makes the update signing key. The private key stays in your login Keychain and never goes in this repository. Put the printed public key in `Roomy/Resources/sparkle-public-ed-key.txt`, and keep a backup of the private key somewhere safe (`generate_keys --account roomy -x <file>`): without it you can't ship updates to existing installs.
 2. Set the version in `VERSION`. `MOLE_VERSION` is the Mole the release ships; to move to a newer Mole, install it (`brew upgrade mole`), test Roomy with it, then change `MOLE_VERSION`.
 3. Run `Roomy/release.sh`. It refuses to build if the bundled Mole isn't `MOLE_VERSION` or fails Roomy's checks, then makes `dist/Roomy-<version>.pkg`, `.zip` (the update, signed with your key), `appcast.xml` (the feed every Roomy checks) and `.sha256`.
-4. `gh release create v$(cat VERSION) dist/Roomy-*.pkg dist/Roomy-*.zip dist/Roomy-*.sha256 dist/appcast.xml --title "Roomy $(cat VERSION)" --notes-file CHANGELOG.md`
+4. Commit, push to `main` and wait for the **Build** check to pass on GitHub. Then run `scripts/publish-release.sh`. It publishes only when `dist/` was built from that exact commit with no local changes and CI passed for it. A release published any other way on a commit whose build didn't pass is turned back into a draft by the Release guard workflow, so it never reaches anyone.
 
 Roomy checks `releases/latest/download/appcast.xml`, so publishing a release is what makes it reach everyone. With an Apple Developer ID, set `ROOMY_SIGN_IDENTITY`, `ROOMY_INSTALLER_IDENTITY` and `ROOMY_NOTARY_PROFILE` and the release script signs and notarizes too.
+
+## Contributing and security
+
+Pull requests are welcome. Only the maintainer can merge, `main` and release tags are protected, and every pull request needs a passing build and the maintainer's review. Workflows from outside contributors run only after the maintainer approves them. To report a security problem privately, see [SECURITY.md](SECURITY.md).
 
 ## Credits and license
 

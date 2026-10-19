@@ -6,17 +6,30 @@ on:
   pull_request:
     branches: [main]
 
+# The build only reads the repository. Pull requests from forks never see secrets (there are none) and can't write.
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   roomy:
     name: Build Roomy
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Mole (bundled into the app)
-        run: brew install mole
+      # Actions are pinned to exact commits so a moved tag can't change what runs; Dependabot proposes updates.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Fetch the Mole version Roomy is pinned to
+        run: scripts/fetch-mole.sh "$RUNNER_TEMP/mole/$(cat MOLE_VERSION)"
       - name: Build and package
-        run: Roomy/release.sh
-      - uses: actions/upload-artifact@v4
+        run: MOLE_HOME="$RUNNER_TEMP/mole/$(cat MOLE_VERSION)" Roomy/release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Roomy-${{ github.sha }}
           path: dist/*
+          retention-days: 14

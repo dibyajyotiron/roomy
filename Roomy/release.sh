@@ -153,6 +153,10 @@ fi
 rm -rf "$WORK"
 
 (cd "$DIST" && shasum -a 256 "Roomy-$VERSION.pkg" "Roomy-$VERSION.zip" > "Roomy-$VERSION.sha256")
+# Which commit this was built from, for scripts/publish-release.sh ("-dirty" if there were local changes).
+COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+[ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || COMMIT="$COMMIT-dirty"
+echo "$COMMIT" > "$DIST/BUILD_COMMIT"
 echo "✓ $PKG"
 echo "✓ $ZIP"
 cat "$DIST/Roomy-$VERSION.sha256"

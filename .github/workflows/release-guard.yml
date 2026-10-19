@@ -1,0 +1,32 @@
+name: Release guard
+
+# A safety net behind scripts/publish-release.sh: a release whose commit didn't pass the Build check is turned back
+# into a draft at once. Drafts are never "latest", so no Roomy downloads it as an update.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  checks: read
+
+jobs:
+  guard:
+    name: Check the release's build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unpublish if its commit's build didn't pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          result=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=Build%20Roomy" --jq '[.check_runs[] | .conclusion // .status] | first // "missing"')
+          echo "Build Roomy for $TAG ($sha): $result"
+          if [ "$result" != "success" ]; then
+            gh release edit "$TAG" -R "$REPO" --draft=true
+            echo "::error::$TAG was published without a passing build ($result), so it's a draft again."
+            exit 1
+          fi

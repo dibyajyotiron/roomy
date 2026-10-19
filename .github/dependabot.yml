@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keeps the pinned GitHub Actions current (the build pins each action to an exact commit).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
