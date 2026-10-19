@@ -1,0 +1,19 @@
+Roomy public website
+
+This website's source and Roomy's original icon are distributed under GNU GPL v3.0;
+see LICENSE.txt. Website source is prepared in the Roomy repository:
+https://github.com/dibyajyotiron/roomy
+
+Roomy is independent. Its app uses Mole by tw93 and contributors (GPL-3.0),
+Stats by Serhiy Mytrovtsiy (MIT), Sparkle (MIT), Pow (MIT), and Poly Haven
+room assets (CC0). The website does not bundle those software engines.
+The app's full notices and source are at:
+https://github.com/dibyajyotiron/roomy/blob/v0.2.2/NOTICE.md
+
+The website room illustration is newly generated fictional art inspired by
+Roomy's living-room metaphor, not an app screenshot or a user's room or device.
+The social preview uses that illustration and the existing Roomy icon.
+All interactive example categories and numbers are invented sample data.
+
+No affiliation with or endorsement by Apple, MacPaw or the upstream projects
+is implied.

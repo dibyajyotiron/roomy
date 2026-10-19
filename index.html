@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Roomy — Free, open-source Mac cleaner for Apple silicon</title>
+    <meta
+      name="description"
+      content="Make room on your Mac with Roomy, a free, open-source Mac cleaner and activity monitor for macOS 26 on Apple silicon. Built with the Mole cleaning engine."
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#f7f5fb" />
+    <meta name="color-scheme" content="light" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <link rel="canonical" href="https://dibyajyotiron.github.io/roomy/" />
+    <link rel="icon" type="image/png" href="assets/roomy-icon.png" />
+    <link rel="apple-touch-icon" href="assets/roomy-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:site_name" content="Roomy" />
+    <meta property="og:title" content="Roomy — Make room on your Mac" />
+    <meta
+      property="og:description"
+      content="A free, open-source Mac cleaner and activity monitor. Made for macOS 26 and Apple silicon. Cleans with Mole."
+    />
+    <meta property="og:url" content="https://dibyajyotiron.github.io/roomy/" />
+    <meta property="og:image" content="https://dibyajyotiron.github.io/roomy/assets/social-preview.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Roomy. Make room on your Mac. Free and open source. macOS 26 and Apple silicon."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Roomy — Make room on your Mac" />
+    <meta
+      name="twitter:description"
+      content="Free, open-source Mac cleanup and activity monitoring for macOS 26 on Apple silicon."
+    />
+    <meta
+      name="twitter:image"
+      content="https://dibyajyotiron.github.io/roomy/assets/social-preview.jpg"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="Roomy. Make room on your Mac. Free and open source. macOS 26 and Apple silicon."
+    />
+    <script type="application/ld+json">
+      {"@context": "https://schema.org", "@graph": [{"@type": "WebSite", "@id": "https://dibyajyotiron.github.io/roomy/#website", "name": "Roomy", "url": "https://dibyajyotiron.github.io/roomy/", "inLanguage": "en"}, {"@type": "SoftwareApplication", "@id": "https://dibyajyotiron.github.io/roomy/#app", "name": "Roomy", "url": "https://dibyajyotiron.github.io/roomy/", "description": "Free, open-source Mac cleaner and activity monitor for macOS 26 on Apple silicon. Built with Mole.", "applicationCategory": "UtilitiesApplication", "operatingSystem": "macOS 26 or later", "processorRequirements": "Apple silicon (ARM64)", "softwareVersion": "0.2.2", "license": "https://github.com/dibyajyotiron/roomy/blob/v0.2.2/LICENSE", "downloadUrl": "https://github.com/dibyajyotiron/roomy/releases/download/v0.2.2/Roomy-0.2.2.zip", "image": "https://dibyajyotiron.github.io/roomy/assets/roomy-icon.png", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}]}
+    </script>
+    <script src="site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="brand" href="#" aria-label="Roomy home"
+        ><img
+          src="assets/roomy-icon.png"
+          alt=""
+          width="44"
+          height="44"
+        />Roomy</a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#inside">Inside Roomy</a>
+        <a href="#questions">Questions</a>
+        <a class="nav-download" href="#download">Get Roomy</a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">Make room<br />on your Mac.</h1>
+          <p class="hero-lede">A little breathing space feels good.</p>
+          <p class="hero-description">
+            Meet Roomy: a free, open-source Mac cleaner and activity monitor.
+            Explore your storage, review cleanup items, and see how your Mac is
+            doing.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#download"
+              >Download Roomy
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M12 4v16m-6-6 6 6 6-6" /></svg></a
+            ><a class="text-link" href="https://github.com/dibyajyotiron/roomy"
+              >Explore the source
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M6 18 18 6M6 6h12v12" /></svg
+            ></a>
+          </div>
+          <p class="compatibility">macOS 26+ · Apple silicon · GPL-3.0</p>
+          <p class="release-note">
+            Current release: 0.2.2. Ad-hoc signed; not Apple-notarized.
+            <a href="#installation">Read before installing</a>.
+          </p>
+        </div>
+        <figure class="hero-art">
+          <img
+            src="assets/room-illustration.jpg"
+            alt="A fictional sunlit living room with a sofa, books, plant and waste bin, inspired by Roomy's Checkup view."
+            width="1536"
+            height="1024"
+            fetchpriority="high"
+          />
+          <figcaption>
+            A Roomy-inspired illustration. No device or personal data.
+          </figcaption>
+        </figure>
+      </section>
+      <div class="intro-strip">
+        <div class="wrap">
+          <p>Your Mac. A little more room.</p>
+          <p>
+            Native SwiftUI <span aria-hidden="true">/</span> Open source
+            <span aria-hidden="true">/</span> No subscription
+          </p>
+        </div>
+      </div>
+      <section
+        class="inside wrap section"
+        id="inside"
+        aria-labelledby="inside-title"
+      >
+        <div class="section-intro">
+          <h2 id="inside-title">Less clutter.<br />A clearer picture.</h2>
+          <p>
+            From forgotten caches to the apps working hard right now, Roomy
+            brings the everyday details together.
+          </p>
+        </div>
+        <div class="feature-list">
+          <article>
+            <h3>Find the buildup.</h3>
+            <p>
+              Checkup brings together app caches, developer tools and AI-tool
+              leftovers. Dedicated cleanup screens let you explore each area in
+              more detail.
+            </p>
+            <p class="feature-detail">
+              Xcode · Homebrew · Node tools · AI tools
+            </p>
+          </article>
+          <article>
+            <h3>See what takes up space.</h3>
+            <p>
+              Explore Disk Map, look through large and old files, find
+              duplicates, or review an application's related files in the
+              uninstaller.
+            </p>
+            <p class="feature-detail">
+              Disk Map · Large files · Duplicates · Uninstaller
+            </p>
+          </article>
+          <article>
+            <h3>Keep an eye on your Mac.</h3>
+            <p>
+              Follow CPU use, memory pressure, disk and network activity,
+              temperatures and running processes. A menu bar panel keeps useful
+              details close.
+            </p>
+            <p class="feature-detail">Activity · Storage · Menu bar</p>
+          </article>
+        </div>
+      </section>
+      <section class="review-section" aria-labelledby="review-title">
+        <div class="review-layout wrap section">
+          <div class="review-copy">
+            <h2 id="review-title">Get to know<br />what's in the bag.</h2>
+            <p>
+              Roomy's Checkup includes a review of the items it proposes to
+              clean. Open a group, look at the paths and sizes, and adjust the
+              selection.
+            </p>
+            <p>
+              Start with <strong>Safe mode</strong>, enabled by default on a
+              fresh install, to preview cleanup without removing files. Read the
+              results before choosing to clean.
+            </p>
+            <p class="sample-note">
+              Try the selection example. These are invented categories and
+              sizes, not a scan, screenshot or performance claim. Nothing on
+              this page accesses your files.
+            </p>
+          </div>
+          <div class="selection-example">
+            <div id="sample-review" role="group" aria-labelledby="sample-title">
+              <div class="sample-heading">
+                <img
+                  src="assets/roomy-icon.png"
+                  width="40"
+                  height="40"
+                  alt=""
+                />
+                <div>
+                  <h3 id="sample-title">A little room to choose.</h3>
+                  <p>Interactive example · synthetic data</p>
+                </div>
+              </div>
+              <fieldset>
+                <legend>Choose sample cleanup categories</legend>
+                <label class="sample-row"
+                  ><input
+                    type="checkbox"
+                    name="cache"
+                    value="1200"
+                    checked
+                  /><span
+                    ><strong>App caches</strong
+                    ><small>Temporary app files</small></span
+                  ><span class="size">1.2 GB</span></label
+                >
+                <label class="sample-row"
+                  ><input
+                    type="checkbox"
+                    name="developer"
+                    value="800"
+                    checked
+                  /><span
+                    ><strong>Developer caches</strong
+                    ><small>Build and package caches</small></span
+                  ><span class="size">800 MB</span></label
+                >
+                <label class="sample-row"
+                  ><input type="checkbox" name="installers" value="350" /><span
+                    ><strong>Old installers</strong
+                    ><small>Downloads to review</small></span
+                  ><span class="size">350 MB</span></label
+                >
+              </fieldset>
+              <div class="sample-total">
+                <span>Example selection</span
+                ><output id="sample-total" aria-live="polite">2.00 GB</output>
+              </div>
+              <p class="sample-footer">
+                An illustration of the review idea, not the app's exact
+                interface.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="open-source wrap section" aria-labelledby="source-title">
+        <div>
+          <h2 id="source-title">A native face.<br />Open-source roots.</h2>
+          <p>
+            Roomy pairs a native macOS interface with
+            <a href="https://github.com/tw93/mole">Mole</a>, the open-source
+            cleaning engine by tw93 and contributors. Each Roomy release bundles
+            a pinned version of Mole.
+          </p>
+          <p>
+            Roomy is free software under GPL-3.0. Read the code, report an
+            issue, or help improve it.
+          </p>
+          <a class="text-link" href="https://github.com/dibyajyotiron/roomy"
+            >Meet Roomy on GitHub
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M6 18 18 6M6 6h12v12" /></svg
+          ></a>
+        </div>
+        <div class="source-aside">
+          <p>Free to use.<br />Open to understand.<br />Room to contribute.</p>
+          <a href="https://github.com/dibyajyotiron/roomy/blob/main/NOTICE.md"
+            >Upstream credits and licenses</a
+          >
+        </div>
+      </section>
+      <section
+        class="faq wrap section"
+        id="questions"
+        aria-labelledby="faq-title"
+      >
+        <h2 id="faq-title">A few things<br />before you start.</h2>
+        <div class="faq-items">
+          <details open>
+            <summary>Which Macs can run Roomy?</summary>
+            <p>
+              The published 0.2.2 app requires macOS 26 or later and a Mac with
+              Apple silicon (ARM64). It does not include an Intel build. Mole is
+              bundled; you do not need to install it separately.
+            </p>
+          </details>
+          <details id="installation" open>
+            <summary>Is Roomy signed and notarized by Apple?</summary>
+            <p>
+              No. Release 0.2.2 has an ad-hoc signature, not an Apple Developer
+              ID signature, and is not Apple-notarized. macOS may block it or
+              show a warning. A download or Homebrew install does not change
+              that status.
+            </p>
+            <p>
+              Read the
+              <a
+                href="https://github.com/dibyajyotiron/roomy/releases/tag/v0.2.2"
+                >release notes and source</a
+              >
+              before deciding to install. Keep macOS protections enabled.
+              Apple's
+              <a href="https://support.apple.com/en-us/102445"
+                >guidance on apps from outside the App Store</a
+              >
+              explains these checks.
+            </p>
+          </details>
+          <details>
+            <summary>Does Roomy need Full Disk Access?</summary>
+            <p>
+              Some areas, such as Mail attachments and protected app data, need
+              Full Disk Access to be measured. You choose whether to grant it in
+              macOS Settings. Results can be incomplete without it. Review the
+              <a href="https://github.com/dibyajyotiron/roomy#permissions"
+                >permissions guide</a
+              >
+              before enabling access.
+            </p>
+          </details>
+          <details>
+            <summary>What should I do on the first run?</summary>
+            <p>
+              Keep Safe mode enabled, run a scan, and explore the review. Read
+              the categories and paths, deselect anything you want to keep, and
+              make a current backup before using cleanup. Safe mode is a
+              preview, not a guarantee about later removal.
+            </p>
+          </details>
+          <details>
+            <summary>Can I install it with Homebrew?</summary>
+            <p>
+              A custom tap is being prepared for the existing 0.2.2 release. It
+              is not published yet, so there is no public brew command to use
+              today. Roomy is not in the official homebrew/cask repository.
+            </p>
+            <p>
+              The proposed tap will preserve quarantine and macOS security
+              checks. Use the download below in the meantime.
+            </p>
+          </details>
+          <details>
+            <summary>Is it free? Where can I report a problem?</summary>
+            <p>
+              Roomy is free and open source under
+              <a href="https://github.com/dibyajyotiron/roomy/blob/main/LICENSE"
+                >GPL-3.0</a
+              >, with no account or subscription. For bugs and feature ideas,
+              <a href="https://github.com/dibyajyotiron/roomy/issues"
+                >open a GitHub issue</a
+              >. To report a vulnerability privately, follow the
+              <a href="https://github.com/dibyajyotiron/roomy/security/policy"
+                >security policy</a
+              >.
+            </p>
+          </details>
+        </div>
+      </section>
+      <section
+        class="download-section"
+        id="download"
+        aria-labelledby="download-title"
+      >
+        <div class="wrap section download-layout">
+          <div>
+            <img
+              src="assets/roomy-icon.png"
+              width="80"
+              height="80"
+              alt=""
+              loading="lazy"
+            />
+            <h2 id="download-title">A little space.<br />A fresh start.</h2>
+            <p>Roomy 0.2.2 for macOS 26+ on Apple silicon.</p>
+            <div class="actions">
+              <a
+                class="button primary"
+                href="https://github.com/dibyajyotiron/roomy/releases/download/v0.2.2/Roomy-0.2.2.zip"
+                >Download 0.2.2 <span class="button-format">ZIP · 17.6 MB</span
+                ><svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M12 4v16m-6-6 6 6 6-6" /></svg
+              ></a>
+            </div>
+            <a
+              class="text-link"
+              href="https://github.com/dibyajyotiron/roomy/releases/tag/v0.2.2"
+              >Release notes and all downloads
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.75"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M6 18 18 6M6 6h12v12" /></svg
+            ></a>
+          </div>
+          <div class="download-note">
+            <h3>Before you open it</h3>
+            <p>
+              This release is ad-hoc signed and not Apple-notarized. Expect
+              macOS checks and possible warnings. Installation does not grant
+              Apple approval.
+            </p>
+            <p>
+              Download the ZIP, extract it in Finder, and move Roomy to
+              Applications if you decide to install. Keep macOS protections
+              enabled.
+            </p>
+            <p>
+              <a
+                href="https://github.com/dibyajyotiron/roomy/releases/download/v0.2.2/Roomy-0.2.2.sha256"
+                >Published SHA256 checksums</a
+              >
+              ·
+              <a href="https://github.com/dibyajyotiron/roomy/tree/v0.2.2"
+                >Source for this release</a
+              >
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <div class="footer-brand">
+        <a class="brand" href="#"
+          ><img
+            src="assets/roomy-icon.png"
+            width="32"
+            height="32"
+            alt=""
+          />Roomy</a
+        >
+        <p>Make room on your Mac.</p>
+      </div>
+      <div>
+        <p>
+          Built with <a href="https://github.com/tw93/mole">Mole</a>. Released
+          under
+          <a href="https://github.com/dibyajyotiron/roomy/blob/main/LICENSE"
+            >GPL-3.0</a
+          >.
+        </p>
+        <p>
+          <a href="https://github.com/dibyajyotiron/roomy/blob/main/NOTICE.md"
+            >Credits and licenses</a
+          >
+          · <a href="https://github.com/dibyajyotiron/roomy">Source</a> ·
+          <a href="https://github.com/dibyajyotiron/roomy/issues">Support</a>
+        </p>
+        <p class="footer-small">
+          Roomy is an independent project, unaffiliated with Apple or the
+          upstream projects.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
