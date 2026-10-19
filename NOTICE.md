@@ -14,13 +14,6 @@ are also ported to Swift in `Packages/MoleCore`; each ported file names its Mole
 Mole asks forks to use a distinct name and to credit Mole as the upstream source. Roomy does not use
 the Mole name, logo or artwork, or the design of the Mole desktop app.
 
-## PureMac (MIT)
-
-Roomy grew out of [PureMac](https://github.com/momenbasel/PureMac) by the PureMac contributors.
-Parts of its services (protection audit, duplicate finder, similar photos, app slimming, Homebrew
-updates) are derived from PureMac's code, used under the MIT License. PureMac's copyright and
-permission notice is kept in `LICENSES/PureMac-MIT.txt`.
-
 ## Stats (MIT)
 
 Fan readings and fan control in `Roomy/Sources/Engine/SMC.swift` (used by the app and its

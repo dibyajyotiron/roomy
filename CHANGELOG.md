@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- About, copyright and credits now name only what Roomy actually uses: Mole, Stats, Sparkle, Pow and Poly Haven.
+
 ## 0.2.1
 
 - Startup Items, rebuilt to match System Settings › Login Items & Extensions. Open at Login, then Allow in the

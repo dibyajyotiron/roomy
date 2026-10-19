@@ -90,7 +90,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>GPL-3.0. Built on PureMac (MIT) and Mole (GPL-3.0).</string>
+  <key>NSHumanReadableCopyright</key><string>GPL-3.0. Cleans with Mole (GPL-3.0).</string>
   <key>SUFeedURL</key><string>$FEED_URL</string>
   <key>SUPublicEDKey</key><string>$ED_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>

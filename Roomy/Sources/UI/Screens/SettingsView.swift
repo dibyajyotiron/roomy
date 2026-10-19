@@ -62,7 +62,7 @@ struct SettingsView: View {
                         Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Roomy").font(.headline)
-                            Text("Make room on your Mac. Free software under GPL-3.0, built on PureMac (MIT), Mole (GPL-3.0) by tw93 and the fan code from Stats (MIT) by Serhiy Mytrovtsiy\((Mole.activeVersion ?? model.snap.moleVersion).map { ", version \($0)" } ?? ""). The living room's furniture, textures and lighting are CC0 scans from Poly Haven.")
+                            Text("Make room on your Mac. Free software under GPL-3.0, cleaning with Mole (GPL-3.0) by tw93 and the fan code from Stats (MIT) by Serhiy Mytrovtsiy\((Mole.activeVersion ?? model.snap.moleVersion).map { ", version \($0)" } ?? ""). The living room's furniture, textures and lighting are CC0 scans from Poly Haven.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

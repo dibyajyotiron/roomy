@@ -65,19 +65,19 @@ Most Mac cleaners ask you to trust a big number. Roomy shows you the list.
 
 ## How it compares
 
-| | Roomy | CleanMyMac | PureMac | Mole |
-|---|---|---|---|---|
-| Price | Free | Paid subscription | Free | Free |
-| Source code | Open, GPL-3.0 | Closed | Open, MIT | Open, GPL-3.0 |
-| What it is | Native macOS 26 app | Native app | Native app | Command line, plus a desktop app |
-| Signed and notarized by Apple | Coming soon (install from Terminal for no extra clicks) | Yes | Yes | Installs with Homebrew |
-| Review before removing | Every item listed, grouped; untick anything, Always keep, Show in Finder | — | — | Text preview (`--dry-run`) |
-| Your Trash during a clean | Never emptied; only when you empty it yourself | — | Empties all Trash bins | Emptied by default |
-| After a clean | What was freed, what went to the Trash, and every removed file in History | — | — | Session log |
-| AI tools | Caches, old versions, chats and worktrees of Claude, Codex, Cursor, LM Studio, Ollama and more | — | Ollama and LM Studio | Caches of common AI apps |
-| Docker | Build cache only; images, containers and volumes are never touched | — | Images, containers and build cache | Build cache |
-| Activity monitor | CPU, memory pressure, energy, disk, network, temperatures, fan control | Menu bar monitor | — | Live status dashboard |
-| Cleaning engine | Mole's, pinned to the version each Roomy release is tested with, plus Roomy's guardrails | Its own | Its own | — |
+| | Roomy | CleanMyMac | Mole |
+|---|---|---|---|
+| Price | Free | Paid subscription | Free |
+| Source code | Open, GPL-3.0 | Closed | Open, GPL-3.0 |
+| What it is | Native macOS 26 app | Native app | Command line, plus a desktop app |
+| Signed and notarized by Apple | Coming soon (install from Terminal for no extra clicks) | Yes | Installs with Homebrew |
+| Review before removing | Every item listed, grouped; untick anything, Always keep, Show in Finder | — | Text preview (`--dry-run`) |
+| Your Trash during a clean | Never emptied; only when you empty it yourself | — | Emptied by default |
+| After a clean | What was freed, what went to the Trash, and every removed file in History | — | Session log |
+| AI tools | Caches, old versions, chats and worktrees of Claude, Codex, Cursor, LM Studio, Ollama and more | — | Caches of common AI apps |
+| Docker | Build cache only; images, containers and volumes are never touched | — | Build cache |
+| Activity monitor | CPU, memory pressure, energy, disk, network, temperatures, fan control | Menu bar monitor | Live status dashboard |
+| Cleaning engine | Mole's, pinned to the version each Roomy release is tested with, plus Roomy's guardrails | Its own | — |
 
 <sub>From each project's own website and README, October 2026. "—" means we couldn't confirm it from public information, not that it's missing. CleanMyMac is a trademark of MacPaw; Roomy isn't affiliated with any of these projects.</sub>
 
@@ -161,9 +161,8 @@ Pull requests are welcome. Only the maintainer can merge, `main` and release tag
 Roomy is free software under the [GNU General Public License v3.0](LICENSE).
 
 - [Mole](https://github.com/tw93/mole) by tw93 and contributors (GPL-3.0): the cleaning engine, bundled inside Roomy and ported in part to Swift in `Packages/MoleCore`.
-- [PureMac](https://github.com/momenbasel/PureMac) by the PureMac contributors (MIT): the app this grew from.
 - [Stats](https://github.com/exelban/stats) by Serhiy Mytrovtsiy (MIT): the SMC code behind fans and temperatures.
 - [Sparkle](https://sparkle-project.org) (MIT) for Roomy's own updates.
 - [Pow](https://github.com/EmergeTools/Pow) (MIT) for effects, and CC0 scans from [Poly Haven](https://polyhaven.com) for the living room.
 
-Full notices are in [NOTICE.md](NOTICE.md) and `LICENSES/`. Roomy isn't affiliated with Apple, MacPaw, Mole, PureMac or any other cleaner.
+Full notices are in [NOTICE.md](NOTICE.md) and `LICENSES/`. Roomy isn't affiliated with Apple, MacPaw, Mole or any other cleaner.
