@@ -26,6 +26,10 @@ struct RootView: View {
             .overlay(alignment: .bottom) { ToastView() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshAccess() }
             .toolbar {
+                if AppModel.scanPart(for: model.route) != nil {
+                    ToolbarItem(placement: .primaryAction) { RescanButton(route: model.route) }
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button(model.phase == .scanning ? "Scanning…" : "Scan") { model.route = .care; model.scanAll() }
                         .help(model.awaitingClean ? "Clean what the last scan found first" : "Scan your Mac with a Checkup")
@@ -40,6 +44,25 @@ struct RootView: View {
         }
         .frame(minWidth: 1000, minHeight: 660)
         .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+    }
+}
+
+/// Scans again just what the screen shows (Storage, Leftovers, AI Cleanup…), leaving the rest of the last scan alone.
+struct RescanButton: View {
+    @Environment(AppModel.self) var model
+    var route: Route
+    var body: some View {
+        let busy = model.isRescanning(route)
+        Button { model.rescan(route) } label: {
+            if busy {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Rescanning…") }
+            } else {
+                Label("Rescan", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
+            }
+        }
+        .disabled(!model.canRescan(route))
+        .keyboardShortcut("r", modifiers: [.command, .shift])
+        .help(model.phase == .scanning ? "A Checkup scan is running" : model.isCleaning ? "Wait for the clean to finish" : "Scan \(route.title) again (⇧⌘R)")
     }
 }
 

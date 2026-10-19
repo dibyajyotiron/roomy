@@ -149,9 +149,20 @@ final class AppModel {
         MoleCheck.removeOldDownloads()
         AppUpdater.shared.start()
         UninstallWatcher.shared.start(onFound: { [weak self] items in self?.addLeftovers(items) },
+                                      onReturned: { [weak self] apps in self?.dropLeftovers(of: apps) },
                                       onOpen: { [weak self] in self?.route = .leftovers; NSApp.activate(); self?.openMainWindow?() })
         // Testing aid: `-RoomyRoute lens` opens on that screen.
         if let r = UserDefaults.standard.string(forKey: "RoomyRoute").flatMap(Route.init(rawValue:)) { route = r }
+    }
+
+    /// An app came back (put back from the Trash, or installed again): its files aren't leftovers any more.
+    func dropLeftovers(of apps: [LeftoverFinder.App]) {
+        let names = Set(apps.map { "\($0.name) (uninstalled)" })
+        let gone = snap.leftovers.filter { names.contains($0.name) }.map(\.path)
+        guard !gone.isEmpty else { return }
+        snap.leftovers.removeAll { gone.contains($0.path) }
+        selection.subtract(gone)
+        save()
     }
 
     func save() {
@@ -183,63 +194,137 @@ final class AppModel {
         Task {
             snap.disk = ExtrasEngine.disk()
             snap.moleVersion = await Mole.version()
-            async let cleanup: Void = step("cleanup") {
-                let c = await CleanupEngine.scan()
-                self.snap.categories = c.categories; self.snap.cacheHolders = c.cacheHolders; self.snap.moleTotal = c.moleTotal
-                // The app check runs at the same time and may have finished first: keep what it found.
-                let mole = Set(c.leftovers.map(\.path))
-                self.snap.leftovers = (c.leftovers + self.snap.leftovers.filter { !mole.contains($0.path) }).filter { !Actions.isOffLimits(Paths.expand($0.path)) }
-                self.snap.trashBytes = await diskSizes([HOME + "/.Trash"])[HOME + "/.Trash"]
-                self.preselect()
-            }
-            async let apps: Void = step("apps") {
-                let a = await AppsEngine.scan()
-                self.snap.apps = a.apps
-                // Apps uninstalled since Roomy last looked, and what their name and ID point to.
-                let now = a.apps.map { LeftoverFinder.App(id: $0.bundleID, name: $0.name) }
-                _ = LeftoverFinder.noteInstalled(now)
-                let gone = await LeftoverFinder.all(installed: now)
-                let goneAt = Set(gone.map(\.path))
-                let found = gone + a.leftovers.filter { !goneAt.contains($0.path) }
-                let known = Set(self.snap.leftovers.map(\.path))
-                // Never list what Roomy would refuse to remove (Docker's and OrbStack's live data, Library roots).
-                self.snap.leftovers += found.filter { !known.contains($0.path) && !Actions.isOffLimits(Paths.expand($0.path)) }
-                for i in found where !known.contains(i.path) { if i.review || !AppsEngine.mayPreselect(i.path) { self.selection.remove(i.path) } else { self.selection.insert(i.path) } }
-                self.snap.languageFiles = await AppsEngine.languageFiles(a.apps)
-                self.snap.universalBinaries = await AppsEngine.universalBinaries(a.apps)
-                self.snap.launchItems = ExtrasEngine.launchItems()
-                self.snap.outdated = await ExtrasEngine.outdatedCasks()
-            }
-            async let ai: Void = step("ai") { self.snap.aiCare = await AICareEngine.scan(); self.preselectAI() }
-            async let dev: Void = step("dev") {
-                self.snap.artifacts = await Mole.purgePreview()
-                self.snap.installers = await Mole.installerPreview()
-            }
-            async let health: Void = step("health") {
-                self.snap.protection = await ExtrasEngine.protection()
-                let m = await Mole.optimizePreview()
-                self.snap.maintenance = m.tasks; self.snap.diagnosis = m.diagnosis
-                self.snap.touchID = await Mole.touchIDEnabled()
-            }
-            async let dups: Void = step("dups") {
-                self.snap.duplicates = await ExtrasEngine.duplicates()
-                let p = await ExtrasEngine.similarPhotos()
-                self.snap.photos = p.groups; self.snap.photosChecked = p.checked
-            }
+            async let cleanup: Void = step("cleanup") { await self.scanCleanup() }
+            async let apps: Void = step("apps") { await self.scanApps() }
+            async let ai: Void = step("ai") { await self.scanAI() }
+            async let dev: Void = step("dev") { await self.scanDev() }
+            async let health: Void = step("health") { await self.scanHealth() }
+            async let dups: Void = step("dups") { await self.scanDups() }
             _ = await (cleanup, apps)
-            await step("lens") {
-                let ctx = self.lensContext()
-                let (root, large) = await DiskMapEngine.root(disk: self.snap.disk, ctx: ctx)
-                self.snap.lens = root
-                self.lensCache = [:]
-                await self.step("large") { self.snap.largeFiles = await CleanupEngine.largeFiles(moleLarge: large) }
-                self.snap.storage = await StorageEngine.scan(disk: self.snap.disk, lens: root, apps: self.snap.apps)
-            }
+            await step("lens") { await self.scanDiskMap { found in await self.step("large") { await self.scanLarge(found) } } }
             _ = await (ai, dev, health, dups)
             snap.scannedAt = Date()
             awaitingClean = checkupBytes > 0
             phase = .done
             save()
+        }
+    }
+
+    // MARK: the parts of a scan (each one can also run alone, from its screen's Rescan)
+
+    func scanCleanup() async {
+        let c = await CleanupEngine.scan()
+        snap.categories = c.categories; snap.cacheHolders = c.cacheHolders; snap.moleTotal = c.moleTotal
+        // The app check runs at the same time and may have finished first: keep what it found.
+        let mole = Set(c.leftovers.map(\.path))
+        // What this part found last time is replaced; what the app check found stays, if it's still there.
+        let stale = foundByCleanup.subtracting(mole)
+        snap.leftovers = (c.leftovers + snap.leftovers.filter { !mole.contains($0.path) && !stale.contains($0.path) && Paths.exists($0.path) })
+            .filter { !Actions.isOffLimits(Paths.expand($0.path)) }
+        foundByCleanup = mole
+        snap.trashBytes = await diskSizes([HOME + "/.Trash"])[HOME + "/.Trash"]
+        preselect()
+    }
+
+    func scanApps() async {
+        let a = await AppsEngine.scan()
+        snap.apps = a.apps
+        // Apps uninstalled since Roomy last looked, and what their name and ID point to.
+        let now = a.apps.map { LeftoverFinder.App(id: $0.bundleID, name: $0.name) }
+        _ = LeftoverFinder.noteInstalled(now)
+        let gone = await LeftoverFinder.all(installed: now)
+        let goneAt = Set(gone.map(\.path))
+        let found = gone + a.leftovers.filter { !goneAt.contains($0.path) }
+        // What the app check found last time is replaced; Mole's findings (the cleanup part) stay, if they're still there.
+        snap.leftovers = snap.leftovers.filter { !foundByApps.contains($0.path) && Paths.exists($0.path) }
+        foundByApps = Set(found.map(\.path))
+        let known = Set(snap.leftovers.map(\.path))
+        // Never list what Roomy would refuse to remove (Docker's and OrbStack's live data, Library roots).
+        snap.leftovers += found.filter { !known.contains($0.path) && !Actions.isOffLimits(Paths.expand($0.path)) }
+        for i in found where !known.contains(i.path) { if i.review || !AppsEngine.mayPreselect(i.path) { selection.remove(i.path) } else { selection.insert(i.path) } }
+        snap.languageFiles = await AppsEngine.languageFiles(a.apps)
+        snap.universalBinaries = await AppsEngine.universalBinaries(a.apps)
+        snap.launchItems = ExtrasEngine.launchItems()
+        snap.outdated = await ExtrasEngine.outdatedCasks()
+    }
+
+    func scanAI() async { snap.aiCare = await AICareEngine.scan(); preselectAI() }
+
+    func scanDev() async {
+        snap.artifacts = await Mole.purgePreview()
+        snap.installers = await Mole.installerPreview()
+    }
+
+    func scanHealth() async {
+        snap.protection = await ExtrasEngine.protection()
+        let m = await Mole.optimizePreview()
+        snap.maintenance = m.tasks; snap.diagnosis = m.diagnosis
+        snap.touchID = await Mole.touchIDEnabled()
+    }
+
+    func scanDups() async {
+        snap.duplicates = await ExtrasEngine.duplicates()
+        let p = await ExtrasEngine.similarPhotos()
+        snap.photos = p.groups; snap.photosChecked = p.checked
+    }
+
+    /// The disk map, then large files (from the same walk) and Storage's categories.
+    func scanDiskMap(large: (([Mole.Analysis.Entry]) async -> Void)? = nil) async {
+        snap.disk = ExtrasEngine.disk()
+        let (root, found) = await DiskMapEngine.root(disk: snap.disk, ctx: lensContext())
+        snap.lens = root
+        lensCache = [:]
+        if let large { await large(found) } else { await scanLarge(found) }
+        snap.storage = await StorageEngine.scan(disk: snap.disk, lens: root, apps: snap.apps)
+    }
+
+    func scanLarge(_ moleLarge: [Mole.Analysis.Entry]) async { snap.largeFiles = await CleanupEngine.largeFiles(moleLarge: moleLarge) }
+
+    /// The part of the scan a screen shows, or nil for screens that don't scan.
+    static func scanPart(for r: Route) -> String? {
+        switch r {
+        case .systemJunk, .userCache, .developer, .mail, .trash, .systemData: "cleanup"
+        case .uninstaller, .updates, .leftovers, .startup, .slimming: "apps"
+        case .aiCare: "ai"
+        case .artifacts, .installers: "dev"
+        case .protection, .maintenance: "health"
+        case .dups, .photos: "dups"
+        case .lens, .large, .storage: "lens"
+        default: nil
+        }
+    }
+
+    /// Which leftovers each part found last, so a rescan replaces only its own.
+    @ObservationIgnored private var foundByCleanup: Set<String> = []
+    @ObservationIgnored private var foundByApps: Set<String> = []
+
+    /// Parts being rescanned on their own right now.
+    var rescanning: Set<String> = []
+    func isRescanning(_ r: Route) -> Bool { Self.scanPart(for: r).map { rescanning.contains($0) } ?? false }
+    func canRescan(_ r: Route) -> Bool {
+        guard let part = Self.scanPart(for: r) else { return false }
+        return !Demo.on && phase != .scanning && !isCleaning && !rescanning.contains(part) && Mole.available
+    }
+
+    /// Scans again just what this screen shows, leaving the rest of the last scan as it was.
+    func rescan(_ r: Route) {
+        guard canRescan(r), let part = Self.scanPart(for: r) else { return }
+        refreshAccess()
+        rescanning.insert(part)
+        Task {
+            switch part {
+            case "cleanup": await scanCleanup()
+            case "apps": await scanApps()
+            case "ai": await scanAI()
+            case "dev": await scanDev()
+            case "health": await scanHealth()
+            case "dups": await scanDups()
+            default: await scanDiskMap()
+            }
+            rescanning.remove(part)
+            awaitingClean = awaitingClean && checkupBytes > 0
+            save()
+            flash("\(r.title) is up to date.")
         }
     }
 
