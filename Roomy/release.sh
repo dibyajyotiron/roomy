@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 VERSION=$(cat VERSION)
 DIST="$ROOT/dist"
-OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build}"
+OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
 APP="$OUT/Roomy.app"
 URL_PREFIX="${ROOMY_DOWNLOAD_URL_PREFIX:-https://github.com/dibyajyotiron/roomy/releases/download/v$VERSION/}"
 

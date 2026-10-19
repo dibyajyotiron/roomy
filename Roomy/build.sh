@@ -10,11 +10,13 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 # Build outside the project: a synced Desktop adds Finder metadata to new files while codesign runs, which makes
 # signing fail. Roomy/build stays as a link to the real build folder, so its paths keep working.
-OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build}"
+OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
 mkdir -p "$OUT"
-# Spotlight never indexes the build folder, so the only Roomy it lists is the installed one.
+# Keep generated files out of Spotlight's file index. Launch Services has a
+# separate app registry, so also unregister the build after signing/launching.
 touch "$OUT/.metadata_never_index"
-if [ ! -L "$ROOT/Roomy/build" ]; then rm -rf "$ROOT/Roomy/build"; ln -s "$OUT" "$ROOT/Roomy/build"; fi
+if [ ! -L "$ROOT/Roomy/build" ]; then rm -rf "$ROOT/Roomy/build"; fi
+ln -sfn "$OUT" "$ROOT/Roomy/build"
 OPT="-Onone -g"
 VERSION=${ROOMY_VERSION:-$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.0.0)}
 # The build number Sparkle compares comes from the version (0.1.0 → 100, 1.2.3 → 10203), so it only ever goes up,
@@ -148,15 +150,21 @@ else
   codesign --force --sign - -r="designated => identifier \"$BUNDLE_ID\"" "$APP" >/dev/null 2>&1
 fi
 codesign --verify --deep --strict "$APP"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+unregister_build() {
+  "$LSREG" -u "$APP" >/dev/null 2>&1 || true
+}
+unregister_build
 echo "✓ $APP"
 if [ "$INSTALL" = 1 ]; then
   DEST="$HOME/Applications/Roomy.app"
   pkill -x Roomy 2>/dev/null || true
   mkdir -p "$HOME/Applications"
   rm -rf "$DEST" && ditto "$APP" "$DEST"
-  LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-  "$LSREG" -u "$APP" >/dev/null 2>&1 || true   # only the installed copy shows up in Spotlight and Launchpad
   "$LSREG" -f "$DEST" >/dev/null 2>&1 || true
   echo "✓ installed $DEST"
   open "$DEST"
-elif [ "$OPEN" = 1 ]; then open "$APP"; fi
+elif [ "$OPEN" = 1 ]; then
+  open "$APP"
+  unregister_build
+fi
