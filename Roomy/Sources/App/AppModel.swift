@@ -92,7 +92,9 @@ final class AppModel {
     enum Phase: Equatable { case idle, scanning, done }
 
     var snap = Snapshot()
-    var route: Route = .care
+    var route: Route = .care { didSet { lastRoute[Area.of(route)] = route } }
+    /// The module each area showed last, so the rail returns to it.
+    var lastRoute: [Area: Route] = [:]
     var phase: Phase = .idle
     var running: Set<String> = []
     var finished: [String] = []
@@ -102,7 +104,14 @@ final class AppModel {
     let monitor = Monitor()
 
     private static let ud = UserDefaults.standard
-    var themeID = ud.string(forKey: "theme") ?? "plum" { didSet { Self.ud.set(themeID, forKey: "theme"); Theme.currentAccent = theme.accent ?? .accentColor } }
+    var themeID = ud.string(forKey: "theme") ?? "plum" {
+        didSet { Self.ud.set(themeID, forKey: "theme"); Theme.currentAccent = theme.accent ?? .accentColor; Theme.current = theme }
+    }
+    /// A module's Clean asked Checkup to clean what's in the bag as soon as it opens.
+    var cleanRequested = false
+    /// The action of the screen's footer, which the orb performs. Set by `FooterBar` while it's on screen.
+    var footer: FooterSpec?
+    @ObservationIgnored var footerAction: (() -> Void)?
     var storedSafeMode = ud.object(forKey: "safeMode") as? Bool ?? true { didSet { Self.ud.set(storedSafeMode, forKey: "safeMode") } }
     /// Safe mode only previews removals. A demo is always in Safe mode.
     var safeMode: Bool {
@@ -133,12 +142,14 @@ final class AppModel {
 
     init() {
         Theme.currentAccent = theme.accent ?? .accentColor
+        Theme.current = theme
         MoleWhitelist.restore()   // in case Roomy quit in the middle of a clean
+        MoleWhitelist.restoreOptimize()
         if let demo = Demo.snapshot {
             if let d = try? Data(contentsOf: URL(fileURLWithPath: demo)), let s = try? JSONDecoder().decode(Snapshot.self, from: d) { snap = s }
             hasFullDiskAccess = true
-            snap.scannedAt = Date().addingTimeInterval(-40)
-            phase = .done; finished = Self.steps.map(\.id); awaitingClean = true
+            snap.scannedAt = nil
+            phase = .idle; finished = []; awaitingClean = false   // the story starts on the untidy room
         } else {
             if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode(Snapshot.self, from: d) { snap = s; phase = .idle }   // Checkup always opens on the untidy room; the last results stay in each module
             for i in snap.history.indices where snap.history[i].title == "Smart Care" { snap.history[i].title = "Checkup" }   // its name in 0.0.1
@@ -147,6 +158,7 @@ final class AppModel {
         }
         for i in snap.leftovers.indices where !AppsEngine.mayPreselect(snap.leftovers[i].path) { snap.leftovers[i].review = true }
         if snap.categories.isEmpty == false { preselect(); preselectAI() }
+        if !Demo.on { scannedParts = partsInSnapshot() }
         MoleCheck.removeOldDownloads()
         AppUpdater.shared.start()
         UninstallWatcher.shared.start(onFound: { [weak self] items in self?.addLeftovers(items) },
@@ -154,6 +166,10 @@ final class AppModel {
                                       onOpen: { [weak self] in self?.route = .leftovers; NSApp.activate(); self?.openMainWindow?() })
         // Testing aid: `-RoomyRoute lens` opens on that screen.
         if let r = UserDefaults.standard.string(forKey: "RoomyRoute").flatMap(Route.init(rawValue:)) { route = r }
+        // Testing aid, demo only: `-RoomyAutoScan YES` plays the scan on launch, for screenshots.
+        if Demo.on, UserDefaults.standard.bool(forKey: "RoomyAutoScan") {
+            Task { try? await Task.sleep(for: .seconds(1.5)); scanAll() }
+        }
     }
 
     /// Cleans recorded as "0 items" because Mole 1.61 changed its log format before Roomy could read it: the real
@@ -196,7 +212,7 @@ final class AppModel {
     ]
 
     func scanAll() {
-        guard !Demo.on else { flash("This is a demo: scanning is off."); return }
+        guard !Demo.on else { demoScan(); return }
         engineMissing = !Mole.available
         guard canScan, !engineMissing else { route = .care; return }
         refreshAccess()
@@ -224,6 +240,23 @@ final class AppModel {
             awaitingClean = checkupBytes > 0
             phase = .done
             save()
+        }
+    }
+
+    /// A demo's scan: the parts report one after another on the demo's own findings. Nothing on this Mac is read.
+    func demoScan() {
+        guard canScan else { return }
+        phase = .scanning
+        finished = []
+        running = Set(Self.steps.map(\.id))
+        Task {
+            for (id, wait) in [("cleanup", 1.7), ("ai", 0.9), ("dev", 0.9), ("lens", 1.2), ("large", 0.8), ("dups", 0.9), ("apps", 1.3), ("health", 1.1)] {
+                try? await Task.sleep(for: .seconds(wait))
+                withAnimation(.snappy) { running.remove(id); finished.append(id); scannedParts.insert(Self.part(of: id)) }
+            }
+            snap.scannedAt = Date()
+            awaitingClean = checkupBytes > 0
+            phase = .done
         }
     }
 
@@ -311,6 +344,26 @@ final class AppModel {
         }
     }
 
+    /// The parts of a scan whose results are in: a module whose part isn't shows its title page instead of a list.
+    /// A demo starts with none, so it opens on title pages like a first launch.
+    var scannedParts: Set<String> = []
+    /// The scan part a Checkup step belongs to ("large" is found by the disk map's walk).
+    static func part(of step: String) -> String { step == "large" ? "lens" : step }
+
+    /// Whether the scan part has run since Roomy opened, or its results came back from the last session.
+    func hasScanned(_ part: String) -> Bool { scannedParts.contains(part) }
+
+    /// What the last session left, by part.
+    func partsInSnapshot() -> Set<String> {
+        var out: Set<String> = []
+        if !snap.categories.isEmpty { out.insert("cleanup") }
+        if !snap.apps.isEmpty { out.insert("apps") }
+        if snap.lens != nil { out.insert("lens") }
+        if !snap.protection.isEmpty { out.insert("health") }
+        if snap.scannedAt != nil { out.formUnion(["ai", "dev", "dups"]) }
+        return out
+    }
+
     /// Which leftovers each part found last, so a rescan replaces only its own.
     @ObservationIgnored private var foundByCleanup: Set<String> = []
     @ObservationIgnored private var foundByApps: Set<String> = []
@@ -320,12 +373,21 @@ final class AppModel {
     func isRescanning(_ r: Route) -> Bool { Self.scanPart(for: r).map { rescanning.contains($0) } ?? false }
     func canRescan(_ r: Route) -> Bool {
         guard let part = Self.scanPart(for: r) else { return false }
-        return !Demo.on && phase != .scanning && !isCleaning && !rescanning.contains(part) && Mole.available
+        return phase != .scanning && !isCleaning && !rescanning.contains(part) && (Demo.on || Mole.available)
     }
 
     /// Scans again just what this screen shows, leaving the rest of the last scan as it was.
     func rescan(_ r: Route) {
         guard canRescan(r), let part = Self.scanPart(for: r) else { return }
+        if Demo.on {
+            // A demo pretends: the orb spins for a moment and nothing is read.
+            rescanning.insert(part)
+            Task {
+                try? await Task.sleep(for: .seconds(2.4))
+                withAnimation(.smooth) { rescanning.remove(part); scannedParts.insert(part) }
+            }
+            return
+        }
         refreshAccess()
         rescanning.insert(part)
         Task {
@@ -338,7 +400,7 @@ final class AppModel {
             case "dups": await scanDups()
             default: await scanDiskMap()
             }
-            rescanning.remove(part)
+            withAnimation(.smooth) { rescanning.remove(part); scannedParts.insert(part) }
             awaitingClean = awaitingClean && checkupBytes > 0
             save()
             flash("\(r.title) is up to date.")
@@ -347,7 +409,7 @@ final class AppModel {
 
     private func step(_ id: String, _ work: @escaping @MainActor () async -> Void) async {
         await work()
-        withAnimation(.snappy) { running.remove(id); finished.append(id) }
+        withAnimation(.snappy) { running.remove(id); finished.append(id); scannedParts.insert(Self.part(of: id)) }
     }
 
     func lensContext() -> DiskMapEngine.Context {
@@ -391,7 +453,11 @@ final class AppModel {
     func toggle(_ id: String) { if selection.contains(id) { selection.remove(id) } else { selection.insert(id) } }
 
     /// Everything Mole found: its clean removes all of it, with its own checks.
-    var moleItems: [CleanItem] { snap.categories.flatMap(\.items).filter { $0.byMole == true } + snap.leftovers.filter { $0.byMole == true } }
+    var moleItems: [CleanItem] {
+        (snap.categories.flatMap(\.items).filter { $0.byMole == true } + snap.leftovers.filter { $0.byMole == true }).filter { !Self.inTrash($0.path) }
+    }
+    /// Your Trash is never cleaned by Checkup: anything in it is left out of every total and list.
+    nonisolated static func inTrash(_ p: String) -> Bool { let x = Paths.expand(p); return x == HOME + "/.Trash" || x.hasPrefix(HOME + "/.Trash/") }
     /// Mole's findings you unticked in Checkup's review. Mole keeps them for that clean.
     var checkupSkip: Set<String> = []
     /// True while any clean runs; every Clean button waits for it.
@@ -400,11 +466,42 @@ final class AppModel {
     var lastResult: HistoryEntry?
     var moleSelected: [CleanItem] { moleItems.filter { !checkupSkip.contains($0.path) } }
     /// What Mole's clean will remove: Mole's own total, or the ticked items once you've unticked some.
-    var moleCleanable: Int64 { checkupSkip.isEmpty ? (snap.moleTotal ?? moleItems.reduce(0) { $0 + $1.bytes }) : moleSelected.reduce(0) { $0 + $1.bytes } }
+    var moleCleanable: Int64 {
+        // Mole's own total, unless it counted anything in the Trash (an older preview): then add up the items instead.
+        let trashed = snap.categories.flatMap(\.items).contains { $0.byMole == true && Self.inTrash($0.path) }
+        return checkupSkip.isEmpty && !trashed ? (snap.moleTotal ?? moleItems.reduce(0) { $0 + $1.bytes }) : moleSelected.reduce(0) { $0 + $1.bytes }
+    }
 
     /// Roomy's own findings that Checkup removes (AI tool caches and old versions), minus anything inside a
     /// folder Mole already covers, so nothing is counted or removed twice.
-    var checkupItems: [CleanItem] {
+    var checkupItems: [CleanItem] { aiCheckupItems + ruleItems }
+
+    /// What Roomy's own rules found (app update downloads, sandboxed apps' caches) and is ticked. They go to the
+    /// Trash through Actions, which checks each one again first.
+    var ruleItems: [CleanItem] {
+        snap.categories.filter(\.safe).flatMap(\.items).filter { $0.app != nil && $0.held == nil && selection.contains($0.path) }
+    }
+
+    /// Caches Roomy's rules found but left because their app is open, by app: what quitting it would add.
+    var quitToInclude: [(bundle: String, name: String, bytes: Int64)] {
+        let held = snap.categories.flatMap(\.held).filter { $0.app != nil && ($0.held ?? "").hasPrefix("Quit ") }
+        return Dictionary(grouping: held, by: { $0.app! }).map { b, items in
+            (b, RoomyRules.appName(b) ?? b, items.reduce(0) { $0 + $1.bytes })
+        }.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// Quits these apps the way ⌘Q does (they ask about anything unsaved), waits for them, then scans the caches again.
+    func quit(_ bundles: [String]) async {
+        let apps = NSWorkspace.shared.runningApplications.filter { bundles.contains($0.bundleIdentifier ?? "") }
+        for a in apps { a.terminate() }
+        for _ in 0..<40 where !apps.allSatisfy(\.isTerminated) { try? await Task.sleep(for: .milliseconds(250)) }
+        let stayed = apps.filter { !$0.isTerminated }.compactMap(\.localizedName)
+        if !stayed.isEmpty { flash("\(stayed.joined(separator: " and ")) didn't quit, so \(stayed.count == 1 ? "its" : "their") cache stays.") }
+        rescan(.userCache)
+    }
+
+    /// AI tools' caches and old versions that Checkup removes.
+    var aiCheckupItems: [CleanItem] {
         let roots = moleItems.map { Paths.expand($0.path) }
         return snap.aiCare.clear.filter { selection.contains("ai:" + $0.path) }
             .filter { i in let p = Paths.expand(i.path); return !roots.contains { p == $0 || p.hasPrefix($0 + "/") } }
@@ -431,7 +528,7 @@ final class AppModel {
             snap.history.insert(entry, at: 0)
             lastResult = entry
             save()
-            flash("Safe mode: nothing was removed. It would have freed \(Fmt.bytes(rep.removed)).")
+            flash(Demo.on ? "This is a demo, so nothing was removed." : "Safe mode: nothing was removed. It would have freed \(Fmt.bytes(rep.removed)).")
             return rep
         }
         let run = await Mole.runClean(keeping: moleItems.map(\.path).filter { checkupSkip.contains($0) })
@@ -450,6 +547,7 @@ final class AppModel {
             snap.moleTotal = 0
             let gone = Set(roomy.map(\.path)).subtracting(rep.failedPaths)
             snap.aiCare.clear.removeAll { gone.contains($0.path) }
+            for i in snap.categories.indices { snap.categories[i].items.removeAll { gone.contains($0.path) } }
             selection.subtract(gone.map { "ai:" + $0 })
         }
         snap.disk = ExtrasEngine.disk()
@@ -482,6 +580,7 @@ final class AppModel {
             flash("Safe mode: maintenance wasn't run. Turn Safe mode off in Settings to run it.")
             return
         }
+        // Exactly Mole's own maintenance, with Mole's own defaults and your Mole keep list.
         _ = await Mole.run(["optimize"], timeout: 1200, dryRun: false)
         let m = await Mole.optimizePreview()
         snap.maintenance = m.tasks; snap.diagnosis = m.diagnosis
@@ -491,14 +590,14 @@ final class AppModel {
     }
 
     @discardableResult
-    func clean(_ title: String, targets all: [Actions.Target], after: (() -> Void)? = nil) async -> Actions.Report {
+    func clean(_ title: String, targets all: [Actions.Target], allowApps: Bool = false, after: (() -> Void)? = nil) async -> Actions.Report {
         guard !isCleaning else { return Actions.Report(simulated: safeMode) }
         isCleaning = true
         defer { isCleaning = false }
         // Mole's findings are removed only by Mole's clean (Checkup), never path by path here.
         let mole = Set(moleItems.map(\.path))
         let targets = all.filter { !mole.contains($0.path) }
-        let rep = await Actions.perform(targets, simulate: safeMode)
+        let rep = await Actions.perform(targets, simulate: safeMode, allowApps: allowApps)
         snap.history.insert(HistoryEntry(date: Date(), title: title, bytes: rep.removed, items: rep.count, simulated: rep.simulated,
                                          failures: rep.failures.isEmpty ? nil : rep.failures, trashed: rep.simulated || rep.removed == 0 ? nil : rep.removed,
                                          removed: rep.simulated ? nil : Array(rep.done.prefix(500))), at: 0)
@@ -539,6 +638,39 @@ final class AppModel {
         withAnimation(.smooth) { snap.leftovers = new + snap.leftovers }
         for i in new where !i.review && AppsEngine.mayPreselect(i.path) { selection.insert(i.path) }
         save()
+    }
+
+    /// The number beside a module in its area's list: what it found, or nil.
+    func badge(for route: Route) -> String? {
+        if let part = Self.scanPart(for: route), !hasScanned(part) { return nil }
+        let s = snap
+        if !route.categories.isEmpty {
+            let b = route.categories.compactMap { s.category($0) }.reduce(0) { $0 + $1.bytes }
+            return b > 0 ? Fmt.bytes(b) : nil
+        }
+        switch route {
+        case .aiCare: let b = s.aiCare.cleanable; return b > 0 ? Fmt.bytes(b) : nil
+        case .artifacts: let b = s.artifacts.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
+        case .uninstaller: return s.apps.isEmpty ? nil : "\(s.apps.count)"
+        case .updates: return s.outdated.isEmpty ? nil : "\(s.outdated.count)"
+        case .leftovers: let b = s.leftovers.filter { !$0.review }.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
+        case .slimming: let b = s.languageFiles.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
+        case .large: let b = s.largeFiles.filter { !LargeFilesView.info($0).locked }.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
+        case .dups: let b = s.duplicates.reduce(0) { $0 + $1.wasted }; return b > 0 ? Fmt.bytes(b) : nil
+        case .photos: return s.photos.isEmpty ? nil : "\(s.photos.count)"
+        case .installers: let b = s.installers.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
+        case .protection: let off = s.protection.filter { $0.on == false }.count; return off > 0 ? "\(off) off" : nil
+        default: return nil
+        }
+    }
+
+    /// A dot on the rail: something in that area wants attention (updates, protections off, leftovers to clear).
+    func areaHasNews(_ a: Area) -> Bool {
+        switch a {
+        case .apps: !snap.outdated.isEmpty || snap.leftovers.contains { !$0.review && $0.bytes > 0 }
+        case .health: snap.protection.contains { $0.on == false }
+        default: false
+        }
     }
 
     func flash(_ s: String) {

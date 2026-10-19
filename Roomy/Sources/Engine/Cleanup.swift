@@ -36,6 +36,8 @@ enum CleanupEngine {
         let pv = await Mole.cleanPreview()
         var mapped = Mole.categories(pv)
         let left = mapped.removeValue(forKey: "leftovers")
+        // Belt and braces: whatever Mole reports, nothing in your Trash is ever offered for cleaning.
+        for k in mapped.keys { mapped[k]?.items.removeAll { AppModel.inTrash($0.path) } }
         async let docker = dockerCategory()
         var cats: [CleanCategory] = titles.map { t in
             let m = mapped[t.key] ?? Mole.Mapped()
@@ -48,6 +50,12 @@ enum CleanupEngine {
             // Mole's "Docker storage" summary counts volumes as reclaimable; Roomy's stricter rules replace it.
             cats[i].items = d.items; cats[i].kept = d.kept; cats[i].skipped = d.skipped; cats[i].safe = false
             cats[i].held = cats[i].held.filter { !$0.name.lowercased().contains("docker") }
+        }
+        // Roomy's own rules: app update downloads and sandboxed apps' caches, wherever Mole doesn't already clean.
+        let ours = await RoomyRules.scan(skipping: cats.flatMap(\.items).filter { $0.byMole == true }.map(\.path))
+        if let i = cats.firstIndex(where: { $0.key == "userCache" }) {
+            cats[i].items = (cats[i].items + ours.items).sorted { $0.bytes > $1.bytes }
+            cats[i].held += ours.held
         }
         let fda = FullDiskAccess.granted
         for i in cats.indices where ["mailAttachments", "trashBins"].contains(cats[i].key) && cats[i].items.isEmpty && !fda {

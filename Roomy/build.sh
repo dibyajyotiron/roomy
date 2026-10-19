@@ -2,7 +2,9 @@
 # Builds Roomy.app with swiftc: MoleCore and Pow as modules, then the app, bundle, icon and an ad-hoc signature.
 # Uses Xcode's toolchain when it's installed; without Xcode the Command Line Tools work too, with Pow
 # patched in the build folder only (the CLT have no SwiftUI macro plugin).
-# Usage: Roomy/build.sh [--release] [--open] [--install]
+# Usage: Roomy/build.sh [--release] [--open] [--install] [--demo]
+#   --demo     builds "Roomy Demo.app" instead: its own bundle ID, a sanitised snapshot of this Mac's last scan inside,
+#              and demo mode on, so Scan and Clean play the whole story without reading or removing anything.
 #   --install  replaces ~/Applications/Roomy.app with this build and opens it: one copy to launch from Spotlight,
 #              and the one to give Full Disk Access to.
 set -eu
@@ -31,7 +33,10 @@ FEED_URL=${ROOMY_FEED_URL:-https://github.com/dibyajyotiron/roomy/releases/lates
 ED_KEY=${ROOMY_ED_KEY:-$(cat "$ROOT/Roomy/Resources/sparkle-public-ed-key.txt" 2>/dev/null || true)}
 OPEN=0
 INSTALL=0
-for a in "$@"; do case "$a" in --release) OPT="-O" ;; --open) OPEN=1 ;; --install) INSTALL=1 ;; esac; done
+DEMO=0
+for a in "$@"; do case "$a" in --release) OPT="-O" ;; --open) OPEN=1 ;; --install) INSTALL=1 ;; --demo) DEMO=1 ;; esac; done
+APP_NAME=Roomy
+if [ "$DEMO" = 1 ]; then APP_NAME="Roomy Demo"; BUNDLE_ID=app.roomy.demo; INSTALL=0; fi
 if [ -d /Applications/Xcode.app ]; then export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer; fi
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 TARGET=arm64-apple-macos26.0
@@ -56,7 +61,7 @@ fi
   -o "$MODS/libPow.a" $(find . -name "*.swift"))
 
 echo "› Roomy"
-APP="$OUT/Roomy.app"
+APP="$OUT/$APP_NAME.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 $SWIFTC $OPT -parse-as-library -module-name Roomy -I "$MODS" -L "$MODS" -lMoleCore -lPow \
   -F "$ROOT/Vendor/Sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
@@ -74,8 +79,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Roomy</string>
-  <key>CFBundleDisplayName</key><string>Roomy</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>Roomy</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -129,6 +134,11 @@ for set in Vendor/Pow/Sources/Pow/Assets.xcassets/*.imageset; do
   img=$(ls -S "$set"/*.png 2>/dev/null | head -1 || true)
   [ -n "$img" ] && cp "$img" "$APP/Contents/Resources/$name.png"
 done
+if [ "$DEMO" = 1 ]; then
+  # Only generic names survive (scripts/roomy-demo-snapshot.py refuses to write if your username remains).
+  SNAP="${ROOMY_DEMO_SOURCE:-$HOME/Library/Application Support/Roomy/snapshot.json}"
+  python3 -I scripts/roomy-demo-snapshot.py "$SNAP" "$APP/Contents/Resources/demo-snapshot.json"
+fi
 xattr -cr "$APP"
 # macOS remembers permissions like Full Disk Access by the app's signing requirement. Plain ad-hoc signing ties that to
 # this exact build, so every rebuild would lose the grant. Use an Apple Development identity when there is one;

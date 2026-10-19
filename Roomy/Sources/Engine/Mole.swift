@@ -39,8 +39,6 @@ enum Mole {
     static var env: [String: String] {
         var e = Shell.baseEnvironment
         e["MOLE_DRY_RUN"] = "1"; e["NO_COLOR"] = "1"; e["MO_NO_OPLOG"] = "1"
-        // Checkup never empties the Trash: that would permanently delete things people put there.
-        e["MOLE_SKIP_TRASH_CLEANUP"] = "1"
         return e
     }
 
@@ -65,7 +63,8 @@ enum Mole {
         var total: Int64? }
 
     static func cleanPreview(using: String? = nil) async -> CleanPreview {
-        let out = await run(["clean", "--dry-run"], timeout: 1200, using: using)
+        // The Trash is on the keep list for the preview too, so it's never counted as something Clean removes.
+        let out = await MoleWhitelist.keeping(MoleWhitelist.alwaysKept) { await run(["clean", "--dry-run"], timeout: 1200, using: using) }
         var pv = CleanPreview()
         var section: String?
         for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -187,14 +186,13 @@ enum Mole {
 
     /// Runs Mole's clean. `keeping` are paths you unticked in the review: Mole leaves them alone this time.
     static func runClean(keeping: [String] = []) async -> CleanRun {
-        await MoleWhitelist.keeping(keeping) { await runCleanNow() }
+        await MoleWhitelist.keeping(MoleWhitelist.alwaysKept + keeping) { await runCleanNow() }
     }
 
     private static func runCleanNow() async -> CleanRun {
         guard let path else { return CleanRun() }
         var e = Shell.baseEnvironment
         e["NO_COLOR"] = "1"
-        e["MOLE_SKIP_TRASH_CLEANUP"] = "1"
         let started = Date().addingTimeInterval(-2)
         let r = await Shell.run(path, ["clean"], environment: e, timeout: 1800)
         var run = readOperations(since: started)
@@ -312,7 +310,7 @@ enum Mole {
             guard !tasks.isEmpty, "→◎○✓".contains(f) else { continue }
             let text = String(s.dropFirst()).trimmed
             var state = ["→": "Would run", "◎": "Needs you", "○": "Not applicable", "✓": "Already fine"][String(f)] ?? ""
-            if f == "→", text.contains(regex: #"already|healthy|valid|clean\b|no legacy|not found|skipped"#) {
+            if f == "→", text.contains(regex: #"already|healthy|valid|clean\b|no legacy|not found|skipped|^no |^nothing|whitelisted"#) {
                 state = text.contains(regex: "skipped") ? "Skipped" : "Already fine"
             }
             let over = text.contains(regex: "memory (released|optimi)|responsiveness improved|speed up|boost")

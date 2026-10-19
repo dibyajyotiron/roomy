@@ -121,7 +121,7 @@ struct UninstallerView: View {
             Button("Move to Trash", role: .destructive) {
                 let targets = [Actions.Target(path: a.path, bytes: a.bytes)] + chosen.map { Actions.Target(path: $0.path, bytes: $0.bytes) }
                 Task {
-                    let rep = await model.clean("Uninstalled \(a.name)", targets: targets)
+                    let rep = await model.clean("Uninstalled \(a.name)", targets: targets, allowApps: true)
                     if !rep.simulated && rep.failures.isEmpty { withAnimation { model.snap.apps.removeAll { $0.path == a.path } } }
                 }
             }

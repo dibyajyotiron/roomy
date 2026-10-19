@@ -129,6 +129,8 @@ if d.get("lens"): d["lens"] = lens(d["lens"], 0)
 d["history"] = [{k: v for k, v in h.items() if k not in ("removed", "failures")} for h in d["history"][:4]]
 
 out = json.dumps(d).replace("/Users/" + USER, "~")
+# zsh names its completion cache after the computer ("~/.zcompdump-Someones-MacBook-Pro-5.9"): keep the version only.
+out = re.sub(r'\.zcompdump-[^"/\\]*?-(\d+\.\d+)', r'.zcompdump-Mac-\1', out)
 bad = [w.lower() for w in [USER, "/Users/" + USER] + sys.argv[3:] if w]
 found = [b for b in bad if b in out.lower()]
 if found:

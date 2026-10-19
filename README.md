@@ -47,7 +47,7 @@ It installs the latest Roomy in your Applications folder and opens it. It downlo
 
 **Signed, notarized download: coming soon.** Until then, a `.pkg` downloaded from [Releases](https://github.com/dibyajyotiron/roomy/releases/latest) in a browser is blocked by macOS the first time. To open it anyway: click **Done**, then go to **System Settings › Privacy & Security**, scroll down and click **Open Anyway**, enter your password and click **Open**. (Right-click › Open no longer works for this on macOS 15 and later.) The Terminal install above doesn't need any of that.
 
-**Updates.** When there's a new version, a download button appears in the sidebar just above your disk. Click it: Roomy downloads the update, quits, installs it and reopens. Nothing downloads until you click. Updates are signed, and Roomy installs only ones signed with its own key.
+**Updates.** When there's a new version, an **Update** button appears in the toolbar (Roomy checks every 10 minutes, and Settings has **Check Now**). Click it: Roomy downloads the update, quits, installs it and reopens. Nothing downloads until you click. Updates are signed, and Roomy installs only ones signed with its own key.
 
 **First run.** Roomy asks for **Full Disk Access** so a scan can see caches in every folder without a question per folder (see [Permissions](#permissions)). **Safe mode** is on until you turn it off in Settings: every clean shows what it would remove and removes nothing.
 
@@ -97,15 +97,16 @@ A Mac cleaner asks for Full Disk Access and then deletes files. Here's what Room
 
 | | |
 |---|---|
-| **Checkup** | One scan for junk, caches, developer and AI leftovers, large files and your Mac's health. A real-time 3D living room shows the clutter being bagged and binned. |
+| **Checkup** | One scan for junk, caches, developer and AI leftovers, large files and your Mac's health. A real-time 3D living room shows each piece of clutter picked up and thrown into one bag, your books put back on the shelf, and the bag binned when you clean. One round button at the bottom of the window scans, then cleans, on every screen. |
 | **Review before cleaning** | Every item Checkup will remove, with tri-state groups, counts, sizes, Show in Finder and Always keep. |
 | **Cleanup** | System junk, user caches, developer tools, project build folders, AI tools, Mail attachments, Trash, and the parts of System Data. |
-| **Applications** | An uninstaller that finds an app's leftovers, Homebrew app updates, startup items and app slimming. **Leftovers** of apps you delete any other way (to the Trash, with an uninstaller or Homebrew) are found the moment the app goes, from its name and bundle ID, with a notification saying how much it left. |
+| **Applications** | An uninstaller that finds an app's leftovers, Homebrew app updates, startup items and app slimming (listed for review; Roomy never edits inside an app). **Leftovers** of apps you delete any other way (to the Trash, with an uninstaller or Homebrew) are found the moment the app goes, from its name and bundle ID, with a notification saying how much it left. |
 | **Your Files** | Disk Map (your disk as Liquid Glass bubbles you can explore and throw around), large and old files, duplicates, similar photos, old installers. |
 | **Activity** | Live CPU, memory pressure, energy, disk, network and thermals; a sortable process list with Quit and Force Quit; fan presets. |
-| **Menu bar** | Health, live tiles, battery, the busiest apps, camera and mic status, Keep awake, and what Roomy has freed so far. |
+| **Menu bar** | Health, live tiles with **Free Up** for memory and disk, battery health with its cycle count and use since the last full charge, the busiest apps, camera and mic status, Keep awake and Keep screen on, and what Roomy has freed so far. |
 | **Storage** | The same categories as System Settings › Storage, with what's inside each and where to clean it. Free space is what's truly free, the same number `df` and Mole show. |
 | **Protection** | Gatekeeper, FileVault, Firewall, SIP and XProtect at a glance, with a direct link to fix anything that's off. |
+| **Maintenance** | Mole's own `mo optimize`, with Mole's defaults, listing each task in plain words before it runs. |
 
 <p align="center">
   <img src="screenshots/roomy/review.jpg" alt="Review before cleaning: every item Checkup removes, grouped, with per-item control" width="430">
@@ -117,10 +118,13 @@ A Mac cleaner asks for Full Disk Access and then deletes files. Here's what Room
 </p>
 <p align="center">
   <img src="screenshots/roomy/storage.jpg" alt="Storage, in the same categories as System Settings" width="430">
-  <img src="screenshots/roomy/menu-bar.jpg" alt="The menu bar panel: health, live tiles, battery, busiest apps, Keep awake" width="200">
+  <img src="screenshots/roomy/maintenance.jpg" alt="Maintenance: Mole's tasks, each explained before it runs" width="430">
+</p>
+<p align="center">
+  <img src="screenshots/roomy/menu-bar.jpg" alt="The menu bar panel: live tiles with Free Up for memory and disk, Keep awake and Keep screen on" width="260">
 </p>
 
-<sub>Screenshots use Roomy's demo mode (`ROOMY_DEMO=<snapshot.json>`), which shows a sanitised sample instead of anyone's files.</sub>
+<sub>Screenshots come from Roomy's demo build (`Roomy/build.sh --demo`), which shows a sanitised sample instead of anyone's files and never removes anything.</sub>
 
 ## Permissions
 

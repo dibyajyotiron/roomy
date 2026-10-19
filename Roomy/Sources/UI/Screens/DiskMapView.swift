@@ -39,7 +39,8 @@ struct DiskMapView: View {
             Button("Move to Trash", role: .destructive) {
                 let items = Array(picked.values)
                 Task {
-                    await model.clean("Disk Map", targets: items.map { Actions.Target(path: $0.path, bytes: $0.bytes) }) {
+                    // You picked these yourself in the map, so an app you chose may go to the Trash too.
+                    await model.clean("Disk Map", targets: items.map { Actions.Target(path: $0.path, bytes: $0.bytes) }, allowApps: true) {
                         let gone = Set(items.map(\.id)); kids.removeAll { gone.contains($0.id) }; picked = [:]
                     }
                 }
@@ -118,14 +119,22 @@ struct DiskMapView: View {
     }
 
     var legend: some View {
-        HStack(spacing: 14) {
-            ForEach([SafetyClass.clean, .user, .appdata, .app, .system], id: \.self) { c in
-                HStack(spacing: 5) { Circle().fill(c.color).frame(width: 7, height: 7); Text(c.label) }
+        // The hint gives way first when the map is narrow; the colour keys never wrap.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                keys
+                Spacer(minLength: 8)
+                Text(stack.count > 1 ? "Drag a bubble to throw it · click empty space to go back" : "Drag a bubble to throw it").lineLimit(1)
             }
-            Spacer()
-            Text(stack.count > 1 ? "Drag a bubble to throw it · click empty space to go back" : "Drag a bubble to throw it")
+            HStack(spacing: 12) { keys; Spacer(minLength: 0) }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder var keys: some View {
+        ForEach([SafetyClass.clean, .user, .appdata, .app, .system], id: \.self) { c in
+            HStack(spacing: 5) { Circle().fill(c.color).frame(width: 7, height: 7); Text(c.label).lineLimit(1) }.fixedSize()
+        }
     }
 
     var list: some View {

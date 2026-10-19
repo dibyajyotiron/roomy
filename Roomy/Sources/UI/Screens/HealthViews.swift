@@ -37,21 +37,58 @@ struct ProtectionView: View {
 struct MaintenanceView: View {
     @Environment(AppModel.self) var model
     @State private var running = false
+
+    /// Mole's preview says what a step would do in the past tense ("Icon services cache rebuilt"). Said plainly, with
+    /// what it changes for you.
+    static func explain(_ text: String) -> (title: String, detail: String) {
+        let t = text.lowercased()
+        if t.contains("quicklook") || t.contains("quick look") { return ("Refresh Quick Look thumbnails", "Clears stale file previews. Finder makes fresh ones as you browse.") }
+        if t.contains("icon services") || t.contains("icon cache") { return ("Rebuild the icon cache", "Fixes blank or wrong app icons. Icons may redraw for a moment.") }
+        if t.contains("saved state") { return ("Tidy saved app states", "Removes window-restore data left by apps. Apps reopen with fresh windows.") }
+        if t.contains("dns") { return ("Refresh the DNS cache", "Forgets stale web addresses, which can fix sites that won't load.") }
+        if t.contains("launch services") || t.contains("open with") { return ("Repair the Open With list", "Rebuilds which apps open which files, removing duplicates and apps that are gone.") }
+        if t.contains("spotlight") { return ("Tidy Spotlight", "Refreshes Spotlight's rules so search results stay current.") }
+        if t.contains("database") || t.contains("vacuum") { return ("Compact app databases", "Shrinks Mail's and other databases. The apps must be closed.") }
+        if t.contains("quarantine") { return ("Trim the download history", "Clears old entries from the list macOS keeps of downloaded files.") }
+        if t.contains("periodic") { return ("Run periodic maintenance", "macOS's own daily, weekly and monthly housekeeping.") }
+        let first = text.prefix(1).uppercased() + text.dropFirst()
+        return (first, "")
+    }
+
     var body: some View {
         let tasks = model.snap.maintenance.filter { !$0.unverifiable }
-        let pending = tasks.flatMap(\.steps).filter { $0.state == "Would run" }.count
+        let pending = tasks.flatMap { t in t.steps.filter { $0.state == "Would run" }.map { (t.title, $0) } }
         VStack(spacing: 0) {
-            ScreenHeader(title: "Maintenance", subtitle: "Routine upkeep macOS doesn't always do on its own: refresh caches, repair app records, tidy databases.") {
-                Button(running ? "Running…" : pending > 0 ? "Run \(pending) Task\(pending == 1 ? "" : "s")" : "Run Maintenance") { Task { running = true; await model.runMaintenance(); running = false } }
-                    .buttonStyle(.glassProminent).disabled(running || tasks.isEmpty)
-                    .help("Runs the tasks marked to run. Steps that need an administrator are skipped.")
-            }
+            ScreenHeader(title: "Maintenance", subtitle: "Routine upkeep macOS doesn't always do on its own: refresh caches, repair app records, tidy databases.",
+                         value: pending.isEmpty ? "All fine" : "\(pending.count)", valueCaption: pending.isEmpty ? "nothing to run" : "task\(pending.count == 1 ? "" : "s") to run")
             ScrollView {
                 if tasks.isEmpty { NotScannedYet() } else {
                     VStack(alignment: .leading, spacing: 12) {
+                        if !pending.isEmpty {
+                            SectionLabel(title: "What runs", note: "Each one is safe to repeat. Steps that need an administrator are skipped.")
+                            ListCard {
+                                ForEach(Array(pending.enumerated()), id: \.offset) { _, p in
+                                    let e = Self.explain(p.1.text)
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: "wrench.and.screwdriver").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.accent)
+                                            .frame(width: 32, height: 32).background(Circle().fill(Palette.accent.opacity(0.14)))
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(e.title).font(.system(size: 13.5, weight: .semibold))
+                                            if !e.detail.isEmpty { Text(e.detail).font(.system(size: 12)).foregroundStyle(Palette.ink2) }
+                                            Text(p.0).font(.system(size: 11)).foregroundStyle(Palette.ink3)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 12).padding(.vertical, 10)
+                                    RowDivider()
+                                }
+                            }
+                        }
                         if !model.snap.diagnosis.isEmpty {
+                            SectionLabel(title: "What Mole noticed")
                             Notice(symbol: "stethoscope", tint: Palette.accent, text: model.snap.diagnosis.joined(separator: "\n"))
                         }
+                        SectionLabel(title: "Everything it checks")
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 12)], spacing: 12) {
                             ForEach(tasks) { t in
                                 VStack(alignment: .leading, spacing: 8) {
@@ -60,8 +97,8 @@ struct MaintenanceView: View {
                                         HStack(alignment: .top, spacing: 8) {
                                             Circle().fill(s.state == "Would run" ? Palette.accent : s.state == "Needs you" ? Palette.warn : Palette.ok).frame(width: 7, height: 7).padding(.top, 5)
                                             VStack(alignment: .leading, spacing: 1) {
-                                                Text(s.text).font(.system(size: 12)).foregroundStyle(Palette.ink2)
-                                                Text(s.state).font(.system(size: 11)).foregroundStyle(Palette.ink3)
+                                                Text(s.state == "Would run" ? Self.explain(s.text).title : s.text).font(.system(size: 12)).foregroundStyle(Palette.ink2)
+                                                Text(s.state == "Would run" ? "Will run" : s.state).font(.system(size: 11)).foregroundStyle(Palette.ink3)
                                             }
                                         }
                                     }
@@ -69,10 +106,17 @@ struct MaintenanceView: View {
                                 .padding(16).frame(maxWidth: .infinity, alignment: .leading).glass(14)
                             }
                         }
-                        Text("Freeing memory isn't listed: its effect can't be measured here. Use Free Up Memory in Activity, which shows the measured change.")
+                        Text("Freeing memory isn't listed: its effect can't be measured here. Use Free Up Memory in Activity or the menu bar, which show the measured change.")
                             .font(.system(size: 12)).foregroundStyle(Palette.ink3)
                     }
                     .padding(.horizontal, 28).padding(.bottom, 20)
+                }
+            }
+            if !pending.isEmpty {
+                FooterBar(bytes: 0, count: pending.count, label: running ? "Running…" : "Run \(pending.count) Task\(pending.count == 1 ? "" : "s")",
+                          note: pending.map { Self.explain($0.1.text).title }.joined(separator: " · "), enabled: !running,
+                          headline: "\(pending.count) task\(pending.count == 1 ? "" : "s") to run") {
+                    Task { running = true; await model.runMaintenance(); running = false }
                 }
             }
         }

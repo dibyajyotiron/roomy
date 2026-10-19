@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.0
+
+- A new look. Each area has its own colours, which run through the whole window: the ground, icons, rows and
+  buttons. Pick "By area" or a single colour in Settings. The sidebar is an icon rail with instant labels, and the
+  lists use larger icons and rounder rows.
+- One round button, half outside the bottom of the window, scans and then cleans on every screen. It stays in place
+  and glows softly. Every screen opens on its own page: a large icon, what it looks at, then the scan and the
+  results, with removal right there. Screens you've already scanned open on their results.
+- Checkup's room: each piece of clutter is picked out and thrown into one black bag that's full when the scan ends,
+  books go back on the shelf, and Clean drops the bag in the bin.
+- Checkup finds more, safely: copies of updates apps already downloaded (Squirrel and Sparkle), and the caches of
+  sandboxed apps, only for apps that are still installed and not running. Open apps are listed as "Quit to include",
+  and everything is checked again just before it's removed.
+- The menu bar: Free Up for memory and disk, battery health with its cycle count and how much you've used since the
+  last full charge, and Keep awake and Keep screen on that say what they're doing.
+- Maintenance runs Mole's own `mo optimize` with Mole's defaults, and lists each task in plain words first.
+- Updates are checked every 10 minutes and when you come back to Roomy, and Settings has Check Now.
+- Safety fixes:
+  - **App Slimming no longer removes apps.** In 0.1.1 and 0.1.2, removing an app's language files moved the whole
+    app to the Trash. It's now review-only, and nothing inside an app or an Applications folder can be removed
+    except by the Uninstaller, or by you in Disk Map.
+  - **Checkup never empties the Trash.** Roomy now keeps `~/.Trash` on Mole's keep list for every scan and clean,
+    and never counts what's in the Trash as junk.
+
 ## 0.1.2
 
 - Checkup's result shows what was really freed again. Mole 1.61 changed how it logs a clean, so Roomy read

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// A module's icon as a slab of coloured glass: an organic pebble with real thickness, light gathering at its far edge,
 /// a bright rim and a soft highlight, carrying the module's SF Symbol. Point at it and it behaves like liquid: it
@@ -7,6 +8,8 @@ struct LiquidIcon: View {
     var route: Route
     var size: CGFloat = 52
     var interactive = true
+    /// Another symbol on the module's glass (the rail shows each area's own).
+    var symbol: String? = nil
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @State private var tilt = CGSize.zero
     @State private var hovering = false
@@ -20,36 +23,47 @@ struct LiquidIcon: View {
         TimelineView(.animation(paused: !hovering || reduceMotion)) { tl in
             let ripple = hovering && !reduceMotion ? phase + tl.date.timeIntervalSince(hoverStart) * 2.4 : phase
             let shape = Pebble(seed: st.seed, phase: ripple, amount: st.seed.amount * (hovering ? 1.6 : 1))
+            let glyph = Image(systemName: LiquidStyle.solid(symbol ?? route.symbol)).font(.system(size: size * 0.36, weight: .bold))
             ZStack {
-                // coloured light passing through the glass onto the surface below, plus a neutral contact shadow
-                shape.fill(st.mid).blur(radius: size * 0.13).opacity(0.5).scaleEffect(0.86).offset(y: size * 0.12)
-                Ellipse().fill(.black.opacity(0.22)).frame(width: size * 0.62, height: size * 0.12).blur(radius: size * 0.05).offset(y: size * 0.43)
-                // the slab's side wall
-                shape.fill(LinearGradient(colors: [st.deep, st.deep.mix(with: .black, by: 0.45)], startPoint: .top, endPoint: .bottom))
-                    .offset(y: size * 0.05)
-                // the face
+                // coloured light passing through the glass onto the surface below, and a neutral contact shadow
+                shape.fill(st.mid).blur(radius: size * 0.14).opacity(0.55).scaleEffect(0.9).offset(y: size * 0.14)
+                Ellipse().fill(.black.opacity(0.26)).frame(width: size * 0.6, height: size * 0.1).blur(radius: size * 0.04).offset(y: size * 0.44)
+                // the slab's side wall: darker glass, catching light along its lower edge
+                shape.fill(LinearGradient(colors: [st.deep, st.deep.mix(with: .black, by: 0.5)], startPoint: .top, endPoint: .bottom))
+                    .offset(y: size * 0.06)
+                shape.stroke(st.light.opacity(0.7), lineWidth: max(0.6, size * 0.014))
+                    .mask(LinearGradient(colors: [.clear, .white], startPoint: UnitPoint(x: 0.5, y: 0.55), endPoint: .bottom))
+                    .offset(y: size * 0.06)
+                // the face: clear coloured glass with depth
                 ZStack {
-                    shape.fill(LinearGradient(colors: [st.light, st.mid, st.deep], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    shape.fill(RadialGradient(colors: [st.light.mix(with: .white, by: 0.3), st.mid, st.deep],
+                                              center: UnitPoint(x: 0.36 - tilt.width * 0.12, y: 0.24 - tilt.height * 0.12),
+                                              startRadius: 0, endRadius: size * 0.66))
                     // light gathering at the far edge, as it does in thick glass
-                    shape.fill(RadialGradient(colors: [st.light.opacity(0.95), st.light.opacity(0)], center: UnitPoint(x: 0.5 - tilt.width * 0.2, y: 1.02),
-                                              startRadius: 0, endRadius: size * 0.55)).blendMode(.screen)
-                    // a darker band just inside the edge: the glass's thickness bending the light
-                    shape.stroke(st.deep.opacity(0.55), lineWidth: size * 0.1).blur(radius: size * 0.05)
-                    // soft highlight where the light hits, sliding opposite the tilt
-                    Ellipse().fill(.white.opacity(0.55)).frame(width: size * 0.5, height: size * 0.22).blur(radius: size * 0.06)
-                        .offset(x: -size * 0.12 - tilt.width * size * 0.1, y: -size * 0.25 - tilt.height * size * 0.08)
+                    shape.fill(RadialGradient(colors: [st.light.opacity(0.95), st.light.opacity(0)], center: UnitPoint(x: 0.62 - tilt.width * 0.2, y: 1.02),
+                                              startRadius: 0, endRadius: size * 0.5)).blendMode(.screen)
+                    // the glass's thickness bending the light: a darker band inside the edge, a fine bright line within it
+                    shape.stroke(st.deep.opacity(0.6), lineWidth: size * 0.11).blur(radius: size * 0.045)
+                    shape.stroke(st.light.opacity(0.4), lineWidth: max(0.5, size * 0.01)).scaleEffect(0.8).blur(radius: 0.4)
+                    // a soft sheen across the top, sliding opposite the tilt
+                    Ellipse().fill(LinearGradient(colors: [.white.opacity(0.62), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
+                        .frame(width: size * 0.64, height: size * 0.32).blur(radius: size * 0.02)
+                        .offset(x: -size * 0.05 - tilt.width * size * 0.1, y: -size * 0.25 - tilt.height * size * 0.08)
                 }
                 .clipShape(shape)
-                // bright rim, strongest at the top
-                shape.stroke(LinearGradient(stops: [.init(color: .white.opacity(0.85), location: 0), .init(color: .white.opacity(0.08), location: 0.45),
-                                                    .init(color: st.light.opacity(0.6), location: 1)], startPoint: .top, endPoint: .bottom),
+                // specular rim: brightest along the top, coloured light along the bottom
+                shape.stroke(LinearGradient(stops: [.init(color: .white.opacity(0.95), location: 0), .init(color: .white.opacity(0.1), location: 0.42),
+                                                    .init(color: st.light.opacity(0.85), location: 1)], startPoint: .top, endPoint: .bottom),
                              lineWidth: max(0.8, size * 0.022))
-                // the symbol floats a little above the face
-                Image(systemName: route.symbol)
-                    .font(.system(size: size * 0.4, weight: .semibold))
-                    .foregroundStyle(LinearGradient(colors: [.white, st.light.mix(with: .white, by: 0.55)], startPoint: .top, endPoint: .bottom))
-                    .shadow(color: st.deep.opacity(0.7), radius: size * 0.03, y: size * 0.035)
-                    .offset(x: tilt.width * size * 0.06, y: tilt.height * size * 0.05)
+                // the emblem: frosted and moulded, with its own thickness and a soft shadow on the glass under it
+                ZStack {
+                    glyph.foregroundStyle(st.deep.mix(with: .black, by: 0.4).opacity(0.6)).blur(radius: size * 0.025).offset(y: size * 0.05)
+                    glyph.foregroundStyle(st.light.mix(with: st.deep, by: 0.25)).offset(y: size * 0.022)
+                    glyph.foregroundStyle(LinearGradient(colors: [.white, st.light.mix(with: .white, by: 0.65)], startPoint: .top, endPoint: .bottom))
+                    glyph.foregroundStyle(.white).mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.3)))
+                        .opacity(0.8)
+                }
+                .offset(x: tilt.width * size * 0.06, y: tilt.height * size * 0.05 - size * 0.01)
             }
             .frame(width: size, height: size)
         }
@@ -121,6 +135,16 @@ struct LiquidStyle {
     var seed: Pebble.Seed
 
     @MainActor private static var cache: [Route: LiquidStyle] = [:]
+    @MainActor private static var solids: [String: String] = [:]
+
+    /// The filled version of a symbol when there is one: emblems read better solid.
+    @MainActor static func solid(_ name: String) -> String {
+        if let s = solids[name] { return s }
+        let f = name.hasSuffix(".fill") ? name : name + ".fill"
+        let out = NSImage(systemSymbolName: f, accessibilityDescription: nil) != nil ? f : name
+        solids[name] = out
+        return out
+    }
 
     @MainActor static func of(_ r: Route) -> LiquidStyle {
         if let s = cache[r] { return s }

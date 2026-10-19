@@ -9,6 +9,14 @@ struct RoomyApp: App {
         if let what = UserDefaults.standard.string(forKey: "RoomyMoleSelfTest") { MoleCheck.selfTest(what) }
         if let id = UserDefaults.standard.string(forKey: "RoomyLeftoverProbe") { LeftoverFinder.probe(id) }
         if let since = UserDefaults.standard.string(forKey: "RoomyReadCleanLog") { Mole.readCleanLogTest(since) }
+        if let out = UserDefaults.standard.string(forKey: "RoomyRulesProbe") { RoomyRules.probe(to: out) }
+        if let dir = UserDefaults.standard.string(forKey: "RoomyRenderUI") {
+            DispatchQueue.main.async { MainActor.assumeIsolated { UIRender.run(to: dir) } }
+        }
+        if let dir = UserDefaults.standard.string(forKey: "RoomyRenderStory") {
+            let dark = UserDefaults.standard.bool(forKey: "RoomyRenderDark")
+            DispatchQueue.main.async { MainActor.assumeIsolated { RoomRender.run(to: dir, dark: dark) } }
+        }
         // Testing aid: `open Roomy.app --args -RoomyAppearance light` (or dark) overrides the system appearance.
         switch UserDefaults.standard.string(forKey: "RoomyAppearance") {
         case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)
@@ -24,7 +32,6 @@ struct RoomyApp: App {
             RootView()
                 .environment(model)
                 .tint(model.theme.accent ?? .accentColor)
-                .containerBackground(for: .window) { ThemeWash(theme: model.theme) }
                 .onAppear { NSWindow.allowsAutomaticWindowTabbing = false }
             }
         }
@@ -60,7 +67,7 @@ struct UpdateMenuItem: View {
     @State private var updater = AppUpdater.shared
     var body: some View {
         switch updater.state {
-        case .off: EmptyView()
+        case .off: Button("Check for Updates…") {}.disabled(true)
         case .available(let v): Button("Update to Roomy \(v)") { updater.update() }
         case .downloading(let v), .ready(let v): Button("Updating to Roomy \(v)…") {}.disabled(true)
         case .checking: Button("Checking for Updates…") {}.disabled(true)

@@ -4,46 +4,128 @@ import AppKit
 struct RootView: View {
     @Environment(AppModel.self) var model
     @Environment(\.openWindow) var openWindow
-    @State private var columns: NavigationSplitViewVisibility = .all
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            Sidebar()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 320)
-        } detail: {
-            // No painted background: the window's own material runs under the glass toolbar and sidebar.
-            GeometryReader { geo in
-                Detail(route: model.route)
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-                    .id("\(model.route.rawValue)·\(model.themeID)")
-                    // Like Apple's own sidebar apps: the old screen leaves at once (no ghosting of two layouts),
-                    // the new one settles in with a short fade.
-                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.16)), removal: .identity))
+        let area = Area.of(model.route)
+        ZStack(alignment: .topLeading) {
+            AreaGround(area: area, theme: model.theme)
+            // Checkup's room runs under everything, rail included; every other area sits beside its list.
+            if area == .checkup {
+                // The room fades in rather than blurring: a blur over a live 3D view costs a second of frames.
+                CheckupView().transition(.opacity.animation(.easeOut(duration: 0.3)))
+            } else {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: 80)
+                    if area.routes.count > 1 {
+                        AreaList(area: area).id(area).transition(.opacity.combined(with: .offset(x: -14)))
+                    }
+                    GeometryReader { geo in
+                        Detail(route: model.route)
+                            // Lists scroll on under the footer and the orb, and end clear of them.
+                            .contentMargins(.bottom, 84, for: .scrollContent)
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                            .id("\(model.route.rawValue)·\(model.themeID)")
+                            .transition(swap)
+                    }
+                }
+                .transition(swap)
             }
-            // Content runs under the toolbar, so each module's artwork sits behind the toolbar glass.
-            .ignoresSafeArea(edges: .top)
-            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            .overlay(alignment: .bottom) { ToastView() }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshAccess() }
-            .toolbar {
-                if AppModel.scanPart(for: model.route) != nil {
-                    ToolbarItem(placement: .primaryAction) { RescanButton(route: model.route) }
-                    ToolbarSpacer(.fixed, placement: .primaryAction)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(model.phase == .scanning ? "Scanning…" : "Scan") { model.route = .care; model.scanAll() }
-                        .help(model.awaitingClean ? "Clean what the last scan found first" : "Scan your Mac with a Checkup")
-                        .disabled(!model.canScan)
-                }
-                ToolbarSpacer(.fixed, placement: .primaryAction)
-                ToolbarItem(placement: .primaryAction) {
-                    Button { model.route = .storage } label: { Label("Storage", systemImage: "internaldrive") }
-                        .help("What's using your disk")
-                }
+            IconRail().padding(.leading, 9).padding(.top, 64).padding(.bottom, 14)
+        }
+        .animation(.smooth(duration: 0.38), value: model.route)
+        .overlay(alignment: .bottom) {
+            ZStack(alignment: .bottom) {
+                InWindowGlow(state: OrbPanel.shared.state)
+                InWindowOrb(state: OrbPanel.shared.state)
             }
+        }
+        .ignoresSafeArea()
+        .background(WindowReader { OrbPanel.shared.attach(to: $0) })
+        .onAppear { syncOrb() }
+        // Again on the next turn: a scan's last step can render on its own before the phase it ends with is set,
+        // and the orb must not stay on "100%".
+        .onChange(of: orbKey) { syncOrb(); Task { @MainActor in syncOrb() } }
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .overlay(alignment: model.route == .care ? .top : .bottom) { ToastView() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refreshAccess() }
+        .toolbar {
+            ToolbarSpacer(.flexible)
+            // The orb scans; once it has turned into the screen's clean-up action, Scan Again lives up here.
+            if AppModel.scanPart(for: model.route) != nil, model.route != .care, model.footer?.route == model.route {
+                ToolbarItem { RescanButton(route: model.route) }
+            }
+            ToolbarItem { UpdatePill() }
         }
         .frame(minWidth: 1000, minHeight: 660)
         .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+    }
+
+    /// Everything the orb shows on a module screen, so it updates only when one of these changes.
+    var orbKey: String {
+        let f = model.footer.map { "\($0.route.rawValue)\($0.title)\($0.enabled)" } ?? "-"
+        return [model.route.rawValue, f, "\(model.isCleaning)", model.rescanning.sorted().joined(), "\(model.phase)", model.themeID, "\(model.finished.count)",
+                "\(model.canRescan(model.route))"].joined(separator: "|")
+    }
+
+    /// The orb on every screen but Checkup (which drives its own): the screen's footer action when something is
+    /// selected, otherwise a scan of what the screen shows; a spinner while either runs.
+    func syncOrb() {
+        let orb = OrbPanel.shared, s = orb.state, r = model.route
+        // The orb never moves: centred on the window's bottom edge on every screen. Checkup sets its own words; until
+        // it does, the orb already reads Scan there rather than the last screen's action.
+        guard r != .care else { if model.phase == .idle { s.title = "Scan"; s.progress = nil; s.busy = false }; return }
+        s.tint = Ground.tint(Area.of(r), model.theme)
+        s.progress = nil; s.busy = false; s.enabled = true
+        if model.phase == .scanning {
+            let p = Double(model.finished.count) / Double(AppModel.steps.count)
+            s.title = "\(Int(p * 100))%"; s.progress = p; s.help = "Scanning"
+        } else if model.isCleaning || model.isRescanning(r) {
+            s.busy = true; s.enabled = false; s.title = ""; s.help = "Working…"
+        } else if let f = model.footer, f.route == r {
+            // After a scan the orb is the screen's clean-up action; it waits, dimmed, until something is selected.
+            s.title = f.title; s.help = f.enabled ? f.help : "Select what to \(f.title.lowercased()) first"; s.enabled = f.enabled
+            s.action = { [model] in model.footerAction?() }
+        } else if AppModel.scanPart(for: r) != nil {
+            s.title = "Scan"; s.enabled = model.canRescan(r)
+            s.help = model.phase == .scanning ? "A Checkup scan is running" : "Scan \(r.title) again (⇧⌘R)"
+            s.action = { [model] in model.rescan(model.route) }
+        } else {
+            orb.show(false); return
+        }
+        orb.show(true)
+    }
+
+    /// Screens arrive out of a soft blur and leave quickly, so two layouts never ghost over each other.
+    var swap: AnyTransition {
+        reduceMotion ? .opacity
+            : .asymmetric(insertion: AnyTransition(.blurReplace).combined(with: .scale(scale: 0.985)),
+                          removal: .opacity.animation(.easeOut(duration: 0.12)))
+    }
+}
+
+/// A new Roomy, as a small glass capsule in the toolbar. One click downloads it, then Roomy reopens updated.
+struct UpdatePill: View {
+    @State private var updater = AppUpdater.shared
+    var body: some View {
+        switch updater.state {
+        case .available(let v):
+            Button { updater.update() } label: { Label("Update to \(v)", systemImage: "arrow.down.circle") }
+                .help("Download Roomy \(v), then Roomy quits, installs it and reopens.")
+        case .downloading(let v), .ready(let v):
+            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Updating to \(v)…") }
+        default: EmptyView()
+        }
+    }
+}
+
+/// ⇧⌘R scans again what the screen shows; the orb does the same with a click.
+struct RescanShortcut: View {
+    @Environment(AppModel.self) var model
+    var route: Route
+    var body: some View {
+        Button("") { model.rescan(route) }.keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(!model.canRescan(route)).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
     }
 }
 
@@ -57,7 +139,7 @@ struct RescanButton: View {
             if busy {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Rescanning…") }
             } else {
-                Label("Rescan", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
+                Label("Scan Again", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
             }
         }
         .disabled(!model.canRescan(route))
@@ -69,6 +151,11 @@ struct RescanButton: View {
 struct Detail: View {
     var route: Route
     var body: some View {
+        ModuleStage(route: route) { screen }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder var screen: some View {
         Group {
             switch route {
             case .care: CheckupView()
@@ -97,154 +184,14 @@ struct Detail: View {
     }
 }
 
-/// The system Liquid Glass sidebar: plain symbols, native count badges, the disk at the bottom.
-struct Sidebar: View {
-    @Environment(AppModel.self) var model
-
-    var body: some View {
-        VStack(spacing: 0) {
-        List(selection: Binding(get: { model.route }, set: { if let r = $0 { model.route = r } })) {
-            ForEach(Route.sections, id: \.1) { section in
-                if let title = section.0 {
-                    Section(title) { ForEach(section.1) { SidebarRow(route: $0).tag($0) } }
-                } else {
-                    ForEach(section.1) { SidebarRow(route: $0).tag($0) }
-                }
-            }
-        }
-        .listStyle(.sidebar)
-            VStack(spacing: 6) {
-                UpdateButton()
-                StorageWidget()
-                HStack(spacing: 4) {
-                    Button { model.route = .settings } label: {
-                        Label("Settings", systemImage: "gearshape")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10).padding(.vertical, 7)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(model.route == .settings ? Color.primary.opacity(0.1) : .clear))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12).padding(.bottom, 12).padding(.top, 8)
-        }
-    }
-}
-
-/// Sits just above the disk once a new Roomy is out: a ringed download icon, like an app's badge on your profile photo.
-/// One click downloads it (the ring fills), then Roomy quits, installs it and reopens.
-struct UpdateButton: View {
-    @State private var updater = AppUpdater.shared
-    @State private var hover = false
-
-    var body: some View {
-        switch updater.state {
-        case .available(let v): row(v, title: "Update available", detail: "Roomy \(v) · click to install", busy: false)
-        case .downloading(let v): row(v, title: "Downloading…", detail: updater.progress.map { "Roomy \(v) · \(Int($0 * 100))%" } ?? "Roomy \(v)", busy: true)
-        case .ready(let v): row(v, title: "Installing…", detail: "Roomy reopens in a moment", busy: true)
-        default: EmptyView()
-        }
-    }
-
-    func row(_ version: String, title: String, detail: String, busy: Bool) -> some View {
-        Button { updater.update() } label: {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle().strokeBorder(Palette.accent.opacity(busy ? 0.25 : 0.9), lineWidth: 1.5)
-                    if busy {
-                        Circle().trim(from: 0, to: max(0.04, updater.progress ?? 0.04))
-                            .stroke(Palette.accent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(-90)).padding(0.75)
-                            .animation(.smooth, value: updater.progress)
-                    }
-                    Image(systemName: "arrow.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.accent)
-                        .symbolEffect(.bounce, options: .repeat(.periodic(delay: 2.5)), isActive: !busy)
-                }
-                .frame(width: 28, height: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 12, weight: .semibold))
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(hover && !busy ? 0.1 : 0.05)))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.accent.opacity(0.35), lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        // Not .disabled: that greys the row out and makes a download look stuck. A click while busy does nothing.
-        .onHover { hover = $0 }
-        .help(busy ? "Updating Roomy to \(version)" : "Download Roomy \(version), then Roomy quits, installs it and reopens.")
-        .accessibilityLabel(busy ? "Updating Roomy to \(version)" : "Update Roomy to \(version)")
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-    }
-}
-
-/// One sidebar row: its own view, so its badge re-reads the model whenever a scan or clean changes it.
-struct SidebarRow: View {
-    @Environment(AppModel.self) var model
-    var route: Route
-    var body: some View {
-        Label(route.title, systemImage: route.symbol)
-            .badge(badgeText.map { Text($0).monospacedDigit() })
-    }
-
-    var badgeText: String? {
-        let s = model.snap
-        if !route.categories.isEmpty {
-            let b = route.categories.compactMap { s.category($0) }.reduce(0) { $0 + $1.bytes }
-            return b > 0 ? Fmt.bytes(b) : nil
-        }
-        switch route {
-        case .aiCare: let b = s.aiCare.cleanable; return b > 0 ? Fmt.bytes(b) : nil
-        case .artifacts: let b = s.artifacts.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
-        case .uninstaller: return s.apps.isEmpty ? nil : "\(s.apps.count)"
-        case .updates: return s.outdated.isEmpty ? nil : "\(s.outdated.count)"
-        case .leftovers: let b = s.leftovers.filter { !$0.review }.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
-        case .slimming: let b = s.languageFiles.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
-        case .large: let b = s.largeFiles.filter { !LargeFilesView.info($0).locked }.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
-        case .dups: let b = s.duplicates.reduce(0) { $0 + $1.wasted }; return b > 0 ? Fmt.bytes(b) : nil
-        case .photos: return s.photos.isEmpty ? nil : "\(s.photos.count)"
-        case .installers: let b = s.installers.reduce(0) { $0 + $1.bytes }; return b > 0 ? Fmt.bytes(b) : nil
-        case .protection: let off = s.protection.filter { $0.on == false }.count; return off > 0 ? "\(off) off" : nil
-        default: return nil
-        }
-    }
-}
-
-/// Disk usage in a small glass card, coloured like System Settings' bar. Click to see what's using it.
-struct StorageWidget: View {
-    @Environment(AppModel.self) var model
-    var body: some View {
-        let d = model.snap.disk
-        Button { model.route = .storage } label: {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
-                    Text(Fmt.bytes(d.free)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                    Text("free of \(Fmt.bytes(d.total))").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                StorageBar(report: model.snap.storage, disk: d, height: 6, selected: nil)
-                Text(d.name).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(model.route == .storage ? Color.primary.opacity(0.1) : .clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("See what's using your disk")
-    }
-}
-
 struct ToastView: View {
     @Environment(AppModel.self) var model
     var body: some View {
         if let t = model.toast {
             Text(t).font(.system(size: 13)).padding(.horizontal, 18).padding(.vertical, 11)
                 .glassEffect(.regular, in: .capsule)
-                .padding(.bottom, 92)
+                // Checkup's strip and orb own the bottom of the window, so there it sits under the headline instead.
+                .padding(model.route == .care ? .top : .bottom, model.route == .care ? 214 : 92)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

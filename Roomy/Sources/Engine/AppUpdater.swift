@@ -3,8 +3,9 @@ import AppKit
 import Sparkle
 import os
 
-/// Roomy updates itself with Sparkle (MIT). Once a day it checks Roomy's releases on GitHub. When there's a newer
-/// version, a download button appears in the sidebar above the disk. One click downloads it, checks its EdDSA signature
+/// Roomy updates itself with Sparkle (MIT). Every ten minutes, and when Roomy comes to the front after that long, it
+/// checks Roomy's releases on GitHub (Sparkle won't schedule checks closer than an hour apart, so Roomy keeps its own
+/// clock and asks Sparkle to look). When there's a newer version, an Update button appears in the toolbar. One click downloads it, checks its EdDSA signature
 /// against the key built into Roomy (so only an update signed by Roomy's maintainer can install), then quits Roomy,
 /// installs it and reopens it. No windows, no banners, and nothing downloads until you click.
 @MainActor @Observable
@@ -22,6 +23,10 @@ final class AppUpdater: NSObject {
     }
 
     @ObservationIgnored private var updater: SPUUpdater?
+    @ObservationIgnored private var clock: Timer?
+    @ObservationIgnored private var activation: NSObjectProtocol?
+    /// How often Roomy looks for a new version on its own.
+    static let interval: TimeInterval = 600
     @ObservationIgnored private var installNow: (() -> Void)?
     /// Sparkle's question "download and install this update?", answered when the button is clicked.
     @ObservationIgnored private var startDownload: (() -> Void)?
@@ -54,7 +59,21 @@ final class AppUpdater: NSObject {
         automatic = u.automaticallyChecksForUpdates
         state = .idle
         lastChecked = u.lastUpdateCheckDate
-        if automatic, lastChecked.map({ Date().timeIntervalSince($0) > 20 * 3600 }) ?? true { checkNow() }
+        checkIfDue()
+        clock = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkIfDue() }
+        }
+        activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkIfDue() }
+        }
+    }
+
+    /// Looks again if automatic checking is on, nothing is under way and the last look was ten minutes ago or more.
+    func checkIfDue() {
+        guard automatic else { return }
+        switch state { case .idle, .failed: break; default: return }
+        if let last = lastChecked, Date().timeIntervalSince(last) < Self.interval - 5 { return }
+        checkNow()
     }
 
     /// Looks for an update now, still without any windows: if there's a newer version, the update button appears.
