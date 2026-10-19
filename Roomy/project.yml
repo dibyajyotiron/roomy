@@ -39,8 +39,8 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Roomy
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "100"
+        CFBundleShortVersionString: "0.1.1"
+        CFBundleVersion: "101"
         LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "GPL-3.0. Built on PureMac (MIT) and Mole (GPL-3.0)."

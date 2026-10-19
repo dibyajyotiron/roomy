@@ -148,6 +148,8 @@ final class AppModel {
         if snap.categories.isEmpty == false { preselect(); preselectAI() }
         MoleCheck.removeOldDownloads()
         AppUpdater.shared.start()
+        UninstallWatcher.shared.start(onFound: { [weak self] items in self?.addLeftovers(items) },
+                                      onOpen: { [weak self] in self?.route = .leftovers; NSApp.activate(); self?.openMainWindow?() })
         // Testing aid: `-RoomyRoute lens` opens on that screen.
         if let r = UserDefaults.standard.string(forKey: "RoomyRoute").flatMap(Route.init(rawValue:)) { route = r }
     }
@@ -193,10 +195,16 @@ final class AppModel {
             async let apps: Void = step("apps") {
                 let a = await AppsEngine.scan()
                 self.snap.apps = a.apps
+                // Apps uninstalled since Roomy last looked, and what their name and ID point to.
+                let now = a.apps.map { LeftoverFinder.App(id: $0.bundleID, name: $0.name) }
+                _ = LeftoverFinder.noteInstalled(now)
+                let gone = await LeftoverFinder.all(installed: now)
+                let goneAt = Set(gone.map(\.path))
+                let found = gone + a.leftovers.filter { !goneAt.contains($0.path) }
                 let known = Set(self.snap.leftovers.map(\.path))
                 // Never list what Roomy would refuse to remove (Docker's and OrbStack's live data, Library roots).
-                self.snap.leftovers += a.leftovers.filter { !known.contains($0.path) && !Actions.isOffLimits(Paths.expand($0.path)) }
-                for i in a.leftovers where !known.contains(i.path) { if i.review || !AppsEngine.mayPreselect(i.path) { self.selection.remove(i.path) } else { self.selection.insert(i.path) } }
+                self.snap.leftovers += found.filter { !known.contains($0.path) && !Actions.isOffLimits(Paths.expand($0.path)) }
+                for i in found where !known.contains(i.path) { if i.review || !AppsEngine.mayPreselect(i.path) { self.selection.remove(i.path) } else { self.selection.insert(i.path) } }
                 self.snap.languageFiles = await AppsEngine.languageFiles(a.apps)
                 self.snap.universalBinaries = await AppsEngine.universalBinaries(a.apps)
                 self.snap.launchItems = ExtrasEngine.launchItems()
@@ -416,6 +424,19 @@ final class AppModel {
         flash(rep.simulated ? "Safe mode: nothing was removed. It would have freed \(Fmt.bytes(rep.removed))."
                             : rep.failures.isEmpty ? "Moved \(Fmt.bytes(rep.removed)) to the Trash. Empty the Trash to free the space." : "Moved \(Fmt.bytes(rep.removed)) to the Trash. \(rep.failures.count) item\(rep.failures.count == 1 ? "" : "s") couldn't be removed; see History.")
         return rep
+    }
+
+    /// Set by the window, so a notification can bring it back after it was closed.
+    @ObservationIgnored var openMainWindow: (() -> Void)?
+
+    /// Leftovers the uninstall watcher found: added to Leftovers, caches and logs selected, data for you to choose.
+    func addLeftovers(_ items: [CleanItem]) {
+        let known = Set(snap.leftovers.map(\.path))
+        let new = items.filter { !known.contains($0.path) }
+        guard !new.isEmpty else { return }
+        withAnimation(.smooth) { snap.leftovers = new + snap.leftovers }
+        for i in new where !i.review && AppsEngine.mayPreselect(i.path) { selection.insert(i.path) }
+        save()
     }
 
     func flash(_ s: String) {

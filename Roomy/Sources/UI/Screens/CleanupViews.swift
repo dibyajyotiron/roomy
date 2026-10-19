@@ -280,6 +280,7 @@ struct LeftoversView: View {
     /// app is still in the Trash.
     static func app(_ i: CleanItem) -> String {
         if let r = i.name.range(of: " (in your Trash)") { return String(i.name[..<r.lowerBound]) + " (in your Trash)" }
+        if i.name.hasSuffix(" (uninstalled)") { return i.name }
         if Paths.name(i.path).hasPrefix(".") { return "Hidden folders in your Home" }
         var core = i.name.replacing(regex: #"^[A-Z0-9]{10}\."#, with: "")
         if core.lowercased().hasPrefix("group.") { core = String(core.dropFirst(6)) }
@@ -288,7 +289,7 @@ struct LeftoversView: View {
         return parts.count > 3 ? parts.prefix(3).joined(separator: ".") : core
     }
     var body: some View {
-        SimpleListScreen(title: "Leftovers", subtitle: "Files apps left behind after you deleted them, grouped by app.",
+        SimpleListScreen(title: "Leftovers", subtitle: "Files apps and command-line tools left behind after you deleted them, grouped by app.",
                          items: model.snap.leftovers, action: "Move to Trash", note: "Goes to the Trash, so you can put it back",
                          empty: ("No leftovers", "Every folder in your Library belongs to an app you still have."),
                          selectHint: "Caches, logs and web storage start selected. Data folders may hold things you'd want back, so you choose.",

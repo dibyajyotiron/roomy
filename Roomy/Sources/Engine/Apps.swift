@@ -80,7 +80,9 @@ enum AppsEngine {
             if core.hasPrefix("group.") { core = String(core.dropFirst(6)) }
             for suffix in [".savedstate", ".binarycookies", ".web"] where core.hasSuffix(suffix) { core = String(core.dropLast(suffix.count)) }
             let parts = core.split(separator: ".")
-            // Never Apple's: anything naming Apple, Shortcuts' old "is.workflow" groups, system groups.
+            // Never Roomy's own (its settings, demo mode), never Apple's: anything naming Apple, Shortcuts' old
+            // "is.workflow" groups, system groups.
+            if core.hasPrefix("app.roomy") { continue }
             if parts.contains("apple") || core.hasPrefix("apple") || core.hasPrefix(".") || core.hasPrefix("is.workflow") || name.lowercased().hasPrefix("systemgroup.") { continue }
             // Not an app's: developer tools, installer frameworks and SDKs whose owner can't be told from the name.
             if Self.notAppOwned.contains(where: { core.hasPrefix($0) }) { continue }

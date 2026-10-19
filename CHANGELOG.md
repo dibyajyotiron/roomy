@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- Leftovers are found the moment you remove an app. Roomy remembers your apps and watches the Trash and the
+  Applications folders; when an app goes, it looks where that app's name and bundle ID point (its Library folders
+  and `~/.config`, `~/.cache`, `~/.local/share` folders), adds what's there to Leftovers and sends a notification
+  with how much it left. Apps removed while Roomy was closed are caught at the next scan. No list of known apps:
+  it works the same for every app.
+- A folder a same-named command-line tool still uses (like `~/.config/opencode` while the `opencode` command is
+  installed) is never listed.
+- Caches and logs of a removed app start selected; its settings and data wait for you to choose.
+- Roomy's own files no longer show up as leftovers.
+
 ## 0.1.0
 
 - Install from Terminal in one line, with no Open Anyway step:

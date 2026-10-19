@@ -100,7 +100,7 @@ A Mac cleaner asks for Full Disk Access and then deletes files. Here's what Room
 | **Checkup** | One scan for junk, caches, developer and AI leftovers, large files and your Mac's health. A real-time 3D living room shows the clutter being bagged and binned. |
 | **Review before cleaning** | Every item Checkup will remove, with tri-state groups, counts, sizes, Show in Finder and Always keep. |
 | **Cleanup** | System junk, user caches, developer tools, project build folders, AI tools, Mail attachments, Trash, and the parts of System Data. |
-| **Applications** | An uninstaller that finds an app's leftovers, Homebrew app updates, leftovers of apps you already deleted (grouped by app), startup items and app slimming. |
+| **Applications** | An uninstaller that finds an app's leftovers, Homebrew app updates, startup items and app slimming. **Leftovers** of apps you delete any other way (to the Trash, with an uninstaller or Homebrew) are found the moment the app goes, from its name and bundle ID, with a notification saying how much it left. |
 | **Your Files** | Disk Map (your disk as Liquid Glass bubbles you can explore and throw around), large and old files, duplicates, similar photos, old installers. |
 | **Activity** | Live CPU, memory pressure, energy, disk, network and thermals; a sortable process list with Quit and Force Quit; fan presets. |
 | **Menu bar** | Health, live tiles, battery, the busiest apps, camera and mic status, Keep awake, and what Roomy has freed so far. |
@@ -126,6 +126,7 @@ A Mac cleaner asks for Full Disk Access and then deletes files. Here's what Room
 
 - **Full Disk Access** lets a scan read caches and app data in every folder, including Mail and other apps' containers, without macOS asking about each folder. Scans only read. Without it, Roomy still works but can't measure Mail attachments, the Trash or some app data, and says so.
 - **Administrator password**: never asked for by a scan or a clean. Roomy cleans what your account can clean and leaves system-level items that would need an administrator alone. Only fan control and freeing memory ask, through macOS's own password prompt, when you choose them.
+- **Notifications**: asked once, the first time an app you remove leaves files behind, so Roomy can tell you how much.
 - **Network**: update checks to this repository's GitHub releases, and Homebrew's own servers when you update an app with it. Nothing else.
 
 ## Build from source

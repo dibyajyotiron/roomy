@@ -3,6 +3,7 @@ import AppKit
 
 struct RootView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.openWindow) var openWindow
     @State private var columns: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -38,6 +39,7 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 1000, minHeight: 660)
+        .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
     }
 }
 
