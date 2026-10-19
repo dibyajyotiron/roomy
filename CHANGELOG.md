@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- Checkup's result shows what was really freed again. Mole 1.61 changed how it logs a clean, so Roomy read
+  "Freed 0 B, 0 items" after cleans that freed gigabytes. Roomy now reads both formats, and History entries
+  recorded as zero are corrected from Mole's log. Roomy also checks every Mole release for this before it ships.
+- Leftovers of a removed app are found where Mole finds them: its helpers (`<id>.helper`, `<id>.ShipIt`…),
+  macOS's hidden per-user caches and its recent-documents list. An app moved to the Trash counts as removed even
+  if it keeps a spare copy of itself in its own data folder, and an app put back from the Trash leaves Leftovers.
+- Rescan on every screen that scans (⇧⌘R): Leftovers, Storage, Disk Map, AI Cleanup, Duplicates and the rest
+  scan just their part again, and anything already gone drops off the list.
+
 ## 0.1.1
 
 - Leftovers are found the moment you remove an app. Roomy remembers your apps and watches the Trash and the
