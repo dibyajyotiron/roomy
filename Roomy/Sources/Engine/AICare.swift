@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// What AI tools leave behind, sorted by the decision it needs:
 /// clear (rebuilt or replaced), held (an open app uses it), review (only you can decide), kept (stays with the tool).
@@ -8,7 +9,7 @@ enum AICareEngine {
     static let tools: [String: Tool] = [
         "claude": Tool(name: "Claude", app: "/Applications/Claude.app", process: "/Claude.app/Contents/"),
         "claudecode": Tool(name: "Claude Code", app: nil, process: "(^|/)claude( |$)"),
-        "codex": Tool(name: "Codex", app: "/Applications/ChatGPT.app", process: "/Codex.app/|Application Support/Codex"),
+        "codex": Tool(name: "Codex", app: "/Applications/Codex.app", process: "/Codex.app/|Application Support/Codex"),
         "chatgpt": Tool(name: "ChatGPT", app: "/Applications/ChatGPT.app", process: "/ChatGPT.app/Contents/MacOS/ChatGPT"),
         "cursor": Tool(name: "Cursor", app: "/Applications/Cursor.app", process: "/Cursor.app/Contents/MacOS/Cursor"),
         "windsurf": Tool(name: "Windsurf", app: "/Applications/Windsurf.app", process: "/Windsurf.app/"),
@@ -90,6 +91,35 @@ enum AICareEngine {
     static func isOpen(_ id: String) async -> Bool {
         guard let p = tools[id]?.process else { return false }
         return await Shell.run("/usr/bin/pgrep", ["-f", p], timeout: 10).ok
+    }
+
+    /// Native AI cleanup is a separate, explicitly selected action. Recheck its owner at removal time.
+    static func heldNow(_ id: String) async -> String? {
+        guard let tool = tools[id] else { return "The owning AI tool couldn't be verified." }
+        let running = await MainActor.run {
+            NSWorkspace.shared.runningApplications.contains { app in
+                if id == "codex", app.bundleIdentifier == "com.openai.codex" { return true }
+                if id == "chatgpt", app.bundleIdentifier == "com.openai.chat" { return true }
+                guard let path = tool.app, let bundle = Bundle(path: path)?.bundleIdentifier else { return false }
+                return app.bundleIdentifier == bundle
+            }
+        }
+        if running { return "Quit \(tool.name) before cleaning its files." }
+        if let process = tool.process {
+            let result = await Shell.run("/usr/bin/pgrep", ["-f", process], timeout: 10)
+            if result.status == 0 { return "Quit \(tool.name) before cleaning its files." }
+            if result.status != 1 { return "Couldn't verify whether \(tool.name) is running. Try again later." }
+        }
+        // Staged updates and old runtimes also wait while this tool's own updater runs (Sparkle's Autoupdate or
+        // Squirrel's ShipIt, both started from inside the app). Other apps' updaters are irrelevant: some, like
+        // BetterDisplay's, stay running all the time.
+        if let app = tool.app {
+            let name = NSRegularExpression.escapedPattern(for: Paths.name(app))
+            let updater = await Shell.run("/usr/bin/pgrep", ["-f", "\(name)/.*(Autoupdate|ShipIt|Updater)"], timeout: 10)
+            if updater.status == 0 { return "\(tool.name) is updating. Clean its files once the update finishes." }
+            if updater.status != 1 { return "Couldn't verify whether \(tool.name) is updating. Try again later." }
+        }
+        return nil
     }
 
     static func scan() async -> AICare {
@@ -235,11 +265,12 @@ enum AICareEngine {
         let sizes = await diskSizes(roots.map(\.1))
         var out: [Worktree] = []
         for (tool, p, repo) in roots {
-            let st = await Shell.run("git", ["-C", p, "--no-optional-locks", "status", "--porcelain"], timeout: 30)
+            let st = await GitInspection.status(at: p)
             let project = repo.map(Paths.name) ?? Paths.name(p)
             let name = tool == "codex" ? Paths.name(Paths.parent(p)) : Paths.name(p)
             var w = Worktree(tool: tool, name: name, project: project, path: Paths.short(p), bytes: sizes[p] ?? 0, modified: Paths.mtime(p), locked: false, why: "", repoRoot: repo)
             if !st.ok {
+                w.locked = true
                 w.why = "Git no longer knows this worktree, so its changes can't be checked. Look inside before removing it."
             } else if !st.output.trimmed.isEmpty {
                 let n = st.output.trimmed.split(separator: "\n").count

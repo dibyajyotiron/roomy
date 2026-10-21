@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.3
+
+- The round button's loader is a ring of liquid light around it, flowing while a clean runs and filling as a scan
+  goes, instead of a spinner inside. The button keeps its colour while it works, its glass is flatter and softer, and
+  the glow around it is subtler and more blended.
+- Security fixes from an independent review:
+  - Your Trash stays protected, and now fails safe: Roomy puts only `~/.Trash` on Mole's keep list for each scan and
+    clean, reads it back to confirm, and if it can't, Mole doesn't run. The list is restored exactly afterwards.
+  - Checkup runs Mole's own clean as it is: no per-item exclusions it couldn't guarantee, and no extra cleaning pass
+    of Roomy's own. Its review shows Mole's findings; Mole checks everything again when it cleans.
+  - Signing: Full Disk Access is tied to each exact build of Roomy, so no other app can borrow it. macOS may ask you
+    to grant it again after an update.
+  - The Terminal install checks a release manifest signed with Roomy's release key (it needs Apple's Command Line
+    Tools for that, and installs nothing without them), stages the new app and keeps the old one until it's in place.
+  - Git is run with repository hooks switched off, Homebrew names are validated before they reach Terminal, and a
+    file that can't be read fully is never counted as a duplicate.
+  - AI Cleanup checks again, just before removing anything, that the tool isn't running or updating, and worktrees
+    need a fresh, clean `git status`.
+  - Mole is fetched from a pinned source with checked helper digests, and a release is published only after its
+    uploaded files and the exact commit's CI are verified.
+- An item that's already gone when you clean (another clean removed it) counts as done, not as a failure, and every
+  list drops what no longer exists.
+- Old Claude Code extensions for VS Code are offered only once VS Code itself no longer uses them.
+
 ## 0.2.2
 
 - About, copyright and credits now name only what Roomy actually uses: Mole, Stats, Sparkle, Pow and Poly Haven.

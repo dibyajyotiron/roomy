@@ -64,7 +64,8 @@ enum Mole {
 
     static func cleanPreview(using: String? = nil) async -> CleanPreview {
         // The Trash is on the keep list for the preview too, so it's never counted as something Clean removes.
-        let out = await MoleWhitelist.keeping(MoleWhitelist.alwaysKept) { await run(["clean", "--dry-run"], timeout: 1200, using: using) }
+        // If it can't be protected the preview is empty, and Clean (which checks again) won't run either.
+        let out = (try? await protectingTrash { await run(["clean", "--dry-run"], timeout: 1200, using: using) }.get()) ?? ""
         var pv = CleanPreview()
         var section: String?
         for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -175,18 +176,26 @@ enum Mole {
         var count: Int { max(removed.count, reported ?? 0) }
     }
 
-    /// Runs Mole's own user-level clean, the same pass its preview showed. Without a terminal Mole runs
-    /// non-interactively and skips anything that needs an administrator. Its protections, keep list and in-use
-    /// checks apply at the moment of removal, and every path it removes, skips or fails is read back from its
-    /// operations log, so Roomy reports exactly what happened.
-    /// Whether a `mo clean` (from Roomy, Mole's app or a Terminal) is running right now.
-    static func cleanRunning() async -> Bool {
-        await Shell.run("/usr/bin/pgrep", ["-if", "mole.*bin/clean.sh|mo clean"], timeout: 5).ok
+    /// Run the bundled engine's normal clean. The preview is informational; Mole decides what is eligible now.
+    /// Roomy does not edit its keep list, provide per-file exclusions or perform an additional cleanup pass.
+    /// Runs one Mole scan or clean with your Trash on Mole's keep list (see MoleTrashGuard). Fails closed.
+    static func protectingTrash<T>(_ body: () async -> T) async -> Result<T, MoleTrashGuard.Failure> {
+        await MoleTrashGuard.protecting(file: URL(fileURLWithPath: config).appendingPathComponent("whitelist"),
+                                        backup: Paths.support.appendingPathComponent("mole-whitelist.backup"),
+                                        trash: HOME + "/.Trash",
+                                        defaults: {
+            guard let mo = path else { throw MoleTrashGuard.Failure(reason: "Mole isn't available.") }
+            let root = URL(fileURLWithPath: mo).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+            let script = (try? String(contentsOf: root.appendingPathComponent("libexec/lib/core/base.sh"), encoding: .utf8)) ?? ""
+            return try MoleTrashGuard.defaults(fromBaseScript: script, home: HOME)
+        }, body)
     }
 
-    /// Runs Mole's clean. `keeping` are paths you unticked in the review: Mole leaves them alone this time.
-    static func runClean(keeping: [String] = []) async -> CleanRun {
-        await MoleWhitelist.keeping(MoleWhitelist.alwaysKept + keeping) { await runCleanNow() }
+    static func runClean() async -> CleanRun {
+        switch await protectingTrash({ await runCleanNow() }) {
+        case .success(let run): return run
+        case .failure(let f): var run = CleanRun(); run.failed = [(HOME + "/.Trash", f.reason)]; return run
+        }
     }
 
     private static func runCleanNow() async -> CleanRun {

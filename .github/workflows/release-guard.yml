@@ -1,32 +1,31 @@
-name: Release guard
+name: Release audit
 
-# A safety net behind scripts/publish-release.sh: a release whose commit didn't pass the Build check is turned back
-# into a draft at once. Drafts are never "latest", so no Roomy downloads it as an update.
+# Post-publication detection only. It cannot prevent clients seeing a release.
+# Actual publishing must validate artifacts and exact-commit CI while the release is still a draft.
 on:
   release:
     types: [published]
 
 permissions:
-  contents: write
+  contents: read
   checks: read
+  actions: read
 
 jobs:
   guard:
-    name: Check the release's build
+    name: Audit the published release commit
     runs-on: ubuntu-latest
     steps:
-      - name: Unpublish if its commit's build didn't pass
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check exact-commit build provenance
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           set -eu
+          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::Invalid release tag"; exit 1 ;; esac
           sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
-          result=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=Build%20Roomy" --jq '[.check_runs[] | .conclusion // .status] | first // "missing"')
-          echo "Build Roomy for $TAG ($sha): $result"
-          if [ "$result" != "success" ]; then
-            gh release edit "$TAG" -R "$REPO" --draft=true
-            echo "::error::$TAG was published without a passing build ($result), so it's a draft again."
-            exit 1
-          fi
+          python3 -I scripts/release-validation.py ci "$sha"

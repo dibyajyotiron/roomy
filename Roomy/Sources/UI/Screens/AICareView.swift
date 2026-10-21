@@ -15,14 +15,15 @@ struct AICareView: View {
 
     var selectedTargets: [Actions.Target] {
         var t: [Actions.Target] = []
-        for i in care.clear + care.review where model.selection.contains("ai:" + i.path) { t.append(.init(path: i.path, bytes: i.bytes)) }
+        for i in care.clear + care.review where model.selection.contains("ai:" + i.path) { t.append(.init(path: i.path, bytes: i.bytes, aiTool: i.tool)) }
         for w in care.worktrees where !w.locked && model.selection.contains("ai:" + w.path) {
-            t.append(.init(path: w.path, bytes: w.bytes, command: w.repoRoot != nil ? ["git", "worktree", "remove", Paths.expand(w.path)] : nil, directory: w.repoRoot))
+            t.append(.init(path: w.path, bytes: w.bytes, command: w.repoRoot != nil ? ["git", "worktree", "remove", Paths.expand(w.path)] : nil, directory: w.repoRoot,
+                           aiTool: w.tool, requiresCleanWorktree: true))
         }
         for c in care.cliTools where c.idleDays >= 30 && model.selection.contains("ai:" + c.path) {
-            t.append(.init(path: c.path, bytes: c.bytes, command: c.uninstall.isEmpty ? nil : c.uninstall))
+            t.append(.init(path: c.path, bytes: c.bytes, command: c.uninstall.isEmpty ? nil : c.uninstall, aiTool: c.tool))
         }
-        for c in care.chats { if let d = ages[c.path], d > 0 { t += c.older(than: d).map { .init(path: $0.path, bytes: $0.bytes) } } }
+        for c in care.chats { if let d = ages[c.path], d > 0 { t += c.older(than: d).map { .init(path: $0.path, bytes: $0.bytes, aiTool: c.tool) } } }
         return t
     }
 
@@ -55,7 +56,7 @@ struct AICareView: View {
                         }
                         group("Worktrees", "Extra checkouts agents made for tasks. Ones with uncommitted changes stay locked.", f(care.worktrees, \.tool)) { w in
                             if w.locked {
-                                ItemRow(path: w.path, title: w.name, subtitle: "\(w.project) · \(w.why)", bytes: w.bytes, mode: .locked("Has uncommitted changes"),
+                                ItemRow(path: w.path, title: w.name, subtitle: "\(w.project) · \(w.why)", bytes: w.bytes, mode: .locked("Git status unavailable or has changes"),
                                         icon: AnyView(ToolBadge(tool: toolRec(w.tool), name: toolRec(w.tool)?.name ?? w.tool)))
                             } else {
                                 ItemRow(path: w.path, title: w.name, subtitle: "\(w.project) · \(Fmt.ago(w.modified)) · \(w.why)", bytes: w.bytes, on: model.selection.contains("ai:" + w.path),

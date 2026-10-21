@@ -2,7 +2,8 @@
 # Builds Roomy.app with swiftc: MoleCore and Pow as modules, then the app, bundle, icon and an ad-hoc signature.
 # Uses Xcode's toolchain when it's installed; without Xcode the Command Line Tools work too, with Pow
 # patched in the build folder only (the CLT have no SwiftUI macro plugin).
-# Usage: Roomy/build.sh [--release] [--open] [--install] [--demo]
+# Usage: Roomy/build.sh [--release] [--open] [--install] [--demo] [--local-v2]
+#   --local-v2 builds a separate Roomy v2 with updates disabled, in a persistent local build folder.
 #   --demo     builds "Roomy Demo.app" instead: its own bundle ID, a sanitised snapshot of this Mac's last scan inside,
 #              and demo mode on, so Scan and Clean play the whole story without reading or removing anything.
 #   --install  replaces ~/Applications/Roomy.app with this build and opens it: one copy to launch from Spotlight,
@@ -10,9 +11,16 @@
 set -eu
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
+LOCAL_V2=0
+for a in "$@"; do [ "$a" != "--local-v2" ] || LOCAL_V2=1; done
 # Build outside the project: a synced Desktop adds Finder metadata to new files while codesign runs, which makes
 # signing fail. Roomy/build stays as a link to the real build folder, so its paths keep working.
-OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
+if [ "$LOCAL_V2" = 1 ]; then
+  # This app is kept for manual testing across sessions; cleaners may remove cache folders.
+  OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Application Support/Roomy Local Builds/v2/build.noindex}"
+else
+  OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
+fi
 mkdir -p "$OUT"
 # Keep generated files out of Spotlight's file index. Launch Services has a
 # separate app registry, so also unregister the build after signing/launching.
@@ -36,7 +44,20 @@ INSTALL=0
 DEMO=0
 for a in "$@"; do case "$a" in --release) OPT="-O" ;; --open) OPEN=1 ;; --install) INSTALL=1 ;; --demo) DEMO=1 ;; esac; done
 APP_NAME=Roomy
+DATA_FOLDER=Roomy
+DISABLE_UPDATES=false
 if [ "$DEMO" = 1 ]; then APP_NAME="Roomy Demo"; BUNDLE_ID=app.roomy.demo; INSTALL=0; fi
+if [ "$LOCAL_V2" = 1 ]; then
+  APP_NAME="Roomy v2"
+  BUNDLE_ID=app.roomy.v2
+  DATA_FOLDER="Roomy v2"
+  DISABLE_UPDATES=true
+  ED_KEY=""
+  FEED_URL=""
+  # A local test build stays beside the production copy and never launches as part of this command.
+  INSTALL=0
+  OPEN=0
+fi
 if [ -d /Applications/Xcode.app ]; then export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer; fi
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 TARGET=arm64-apple-macos26.0
@@ -45,25 +66,25 @@ MODS="$OUT/modules"
 mkdir -p "$MODS"
 
 echo "› MoleCore"
-$SWIFTC $OPT -parse-as-library -module-name MoleCore -emit-library -static -emit-module -emit-module-path "$MODS/MoleCore.swiftmodule" \
+$SWIFTC -module-cache-path "$OUT/module-cache" $OPT -parse-as-library -module-name MoleCore -emit-library -static -emit-module -emit-module-path "$MODS/MoleCore.swiftmodule" \
   -o "$MODS/libMoleCore.a" Packages/MoleCore/Sources/MoleCore/*.swift
 
 echo "› Pow"
 POWSRC="$OUT/pow-src"
 rm -rf "$POWSRC" && cp -R Vendor/Pow/Sources/Pow "$POWSRC"
 printf 'import Foundation\nextension Bundle { static let module: Bundle = Bundle.main }\n' > "$POWSRC/_RoomyBundle.swift"
-PLUGIN="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
+PLUGIN="${DEVELOPER_DIR:-/nonexistent}/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib"
 if [ ! -f "${PLUGIN:-/nonexistent}" ]; then
   find "$POWSRC" -name "*.swift" -exec perl -0pi -e 's/\@State(\s)/\@PowState$1/g' {} \;
   printf 'import SwiftUI\ntypealias PowState = SwiftUI.State\n' > "$POWSRC/_PowState.swift"
 fi
-(cd "$POWSRC" && $SWIFTC -O -parse-as-library -module-name Pow -emit-library -static -emit-module -emit-module-path "$MODS/Pow.swiftmodule" \
+(cd "$POWSRC" && $SWIFTC -module-cache-path "$OUT/module-cache" -O -parse-as-library -module-name Pow -emit-library -static -emit-module -emit-module-path "$MODS/Pow.swiftmodule" \
   -o "$MODS/libPow.a" $(find . -name "*.swift"))
 
 echo "› Roomy"
 APP="$OUT/$APP_NAME.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-$SWIFTC $OPT -parse-as-library -module-name Roomy -I "$MODS" -L "$MODS" -lMoleCore -lPow \
+$SWIFTC -module-cache-path "$OUT/module-cache" $OPT -parse-as-library -module-name Roomy -I "$MODS" -L "$MODS" -lMoleCore -lPow \
   -F "$ROOT/Vendor/Sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$APP/Contents/MacOS/Roomy" $(find Roomy/Sources -name "*.swift")
 # Sparkle (MIT), for Roomy's own updates. Roomy isn't sandboxed, so its XPC services aren't included.
@@ -72,7 +93,7 @@ ditto "$ROOT/Vendor/Sparkle/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle
 
 echo "› Fan helper"
 # roomy-fan is the only part that ever runs as root: you install it from Status, and it can only set fan speed.
-$SWIFTC $OPT -module-name RoomyFan -o "$APP/Contents/MacOS/roomy-fan" Roomy/Helper/main.swift Roomy/Sources/Engine/SMC.swift
+$SWIFTC -module-cache-path "$OUT/module-cache" $OPT -module-name RoomyFan -o "$APP/Contents/MacOS/roomy-fan" Roomy/Helper/main.swift Roomy/Sources/Engine/SMC.swift
 
 echo "› Bundle"
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -98,11 +119,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>SUAllowsAutomaticUpdates</key><true/>
   <key>SUVerifyUpdateBeforeExtraction</key><true/>
   <key>SUEnableSystemProfiling</key><false/>
+  <key>RoomyDataFolder</key><string>$DATA_FOLDER</string>
+  <key>RoomyDisableUpdates</key><$DISABLE_UPDATES/>
 </dict></plist>
 PLIST
 ICONSET="$OUT/AppIcon.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
-swift Roomy/generate-icon.swift
+if [ "${ROOMY_REGENERATE_ICONS:-0}" = 1 ]; then swift Roomy/generate-icon.swift; fi
 for s in 16 32 128 256 512; do
   cp "Roomy/Resources/Assets.xcassets/AppIcon.appiconset/icon_${s}x${s}.png" "$ICONSET/icon_${s}x${s}.png"
   cp "Roomy/Resources/Assets.xcassets/AppIcon.appiconset/icon_${s}x${s}@2x.png" "$ICONSET/icon_${s}x${s}@2x.png"
@@ -119,6 +142,9 @@ if [ -n "$MOLE_HOME" ] && [ -x "$MOLE_HOME/bin/mole" ]; then
   ditto "$MOLE_HOME/libexec" "$APP/Contents/Resources/mole/libexec"
   sed "s|^SCRIPT_DIR=.*|SCRIPT_DIR=\"\$(cd \"\$(dirname \"\${BASH_SOURCE[0]}\")/../libexec\" \&\& pwd)\"|" "$MOLE_HOME/bin/mole" > "$APP/Contents/Resources/mole/bin/mole"
   chmod 755 "$APP/Contents/Resources/mole/bin/mole"
+  for marker in ROOMY_MOLE_COMMIT ROOMY_MOLE_CHECKSUMS; do
+    [ ! -f "$MOLE_HOME/$marker" ] || cp "$MOLE_HOME/$marker" "$APP/Contents/Resources/mole/$marker"
+  done
   cp "$MOLE_HOME/LICENSE" "$APP/Contents/Resources/mole/LICENSE"
   echo "  bundled Mole $(basename "$MOLE_HOME")"
 else
@@ -139,11 +165,13 @@ if [ "$DEMO" = 1 ]; then
   SNAP="${ROOMY_DEMO_SOURCE:-$HOME/Library/Application Support/Roomy/snapshot.json}"
   python3 -I scripts/roomy-demo-snapshot.py "$SNAP" "$APP/Contents/Resources/demo-snapshot.json"
 fi
+python3 -I scripts/release-validation.py build-info "$APP"
 xattr -cr "$APP"
-# macOS remembers permissions like Full Disk Access by the app's signing requirement. Plain ad-hoc signing ties that to
-# this exact build, so every rebuild would lose the grant. Use an Apple Development identity when there is one;
-# otherwise sign ad-hoc with a requirement that names the bundle ID, so grants survive rebuilds on this Mac.
+# Use an available development identity, otherwise the normal ad-hoc signature. Never reduce the designated
+# requirement to a bundle identifier: another binary can claim that identifier. Ad-hoc builds may need privacy
+# permissions granted again after an update; retaining that identity boundary is intentional.
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')
+if [ "$LOCAL_V2" = 1 ]; then IDENTITY=""; fi
 for go in "$APP"/Contents/Resources/mole/libexec/bin/*-go; do
   [ -f "$go" ] && codesign --force --sign "${IDENTITY:--}" ${IDENTITY:+--options runtime} "$go" >/dev/null 2>&1
 done
@@ -157,7 +185,7 @@ if [ -n "$IDENTITY" ]; then
   codesign --force --options runtime --sign "$IDENTITY" "$APP" >/dev/null 2>&1
 else
   codesign --force --sign - -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
-  codesign --force --sign - -r="designated => identifier \"$BUNDLE_ID\"" "$APP" >/dev/null 2>&1
+  codesign --force --sign - "$APP" >/dev/null 2>&1
 fi
 codesign --verify --deep --strict "$APP"
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister

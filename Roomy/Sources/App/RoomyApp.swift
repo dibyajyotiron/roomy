@@ -9,7 +9,6 @@ struct RoomyApp: App {
         if let what = UserDefaults.standard.string(forKey: "RoomyMoleSelfTest") { MoleCheck.selfTest(what) }
         if let id = UserDefaults.standard.string(forKey: "RoomyLeftoverProbe") { LeftoverFinder.probe(id) }
         if let since = UserDefaults.standard.string(forKey: "RoomyReadCleanLog") { Mole.readCleanLogTest(since) }
-        if let out = UserDefaults.standard.string(forKey: "RoomyRulesProbe") { RoomyRules.probe(to: out) }
         if let out = UserDefaults.standard.string(forKey: "RoomyStartupProbe") { StartupEngine.probe(to: out, fullList: UserDefaults.standard.string(forKey: "RoomyStartupDump")) }
         if let dir = UserDefaults.standard.string(forKey: "RoomyRenderUI") {
             DispatchQueue.main.async { MainActor.assumeIsolated { UIRender.run(to: dir) } }

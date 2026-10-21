@@ -203,7 +203,7 @@ struct InWindowOrb: View {
     var body: some View {
         Button(action: { state.action() }) {
             Group {
-                if state.busy { ProgressView().controlSize(.regular).tint(.white) }
+                if state.busy { Text("Cleaning").font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.92)) }
                 else {
                     Text(state.title).font(.system(size: state.title.count > 5 ? 15 : 17, weight: .medium, design: state.progress == nil ? .default : .rounded))
                         .monospacedDigit().foregroundStyle(.white).shadow(color: .black.opacity(0.22), radius: 1.5, y: 1)
@@ -211,7 +211,7 @@ struct InWindowOrb: View {
             }
             .frame(width: 92, height: 92).contentShape(Circle())
         }
-        .buttonStyle(OrbStyle(tint: state.tint, d: 92))
+        .buttonStyle(OrbStyle(tint: state.tint, d: 92, busy: state.busy))
         .disabled(!state.enabled)
         .scaleEffect(state.visible ? 1 : 0.4)
         .opacity(state.visible ? 1 : 0)
@@ -236,7 +236,7 @@ struct InWindowGlow: View {
             .opacity(state.visible ? 1 : 0)
             .animation(.spring(response: 0.55, dampingFraction: 0.62), value: state.visible)
             .blendMode(scheme == .dark ? .plusLighter : .normal)
-            .opacity(scheme == .dark ? 0.85 : 0.55)
+            .opacity(scheme == .dark ? 0.6 : 0.38)
             .offset(x: state.shift, y: OrbPanel.glowSide / 2 - state.lift)
             .animation(.smooth(duration: 0.38), value: state.shift)
             .allowsHitTesting(false)
@@ -260,24 +260,15 @@ struct OrbButton: View {
     var body: some View {
         let a = state.tint
         ZStack {
-            if let p = state.progress {
-                ZStack {
-                    Circle().stroke(.white.opacity(0.16), lineWidth: 3.5)
-                    Circle().trim(from: 0, to: max(0.02, p))
-                        .stroke(AngularGradient(colors: [.white.opacity(0.35), .white], center: .center, startAngle: .degrees(0), endAngle: .degrees(360 * max(0.02, p))),
-                                style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .shadow(color: a.mix(with: .white, by: 0.5), radius: 5)
-                        .animation(.smooth(duration: 0.6), value: p)
-                }
-                .frame(width: d + 18, height: d + 18)
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            if state.progress != nil || state.busy {
+                LiquidRing(tint: a, d: d, progress: state.busy ? nil : state.progress)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
 
             Button(action: { state.action() }) {
                 label.frame(width: d, height: d).contentShape(Circle())
             }
-            .buttonStyle(OrbStyle(tint: a, d: d))
+            .buttonStyle(OrbStyle(tint: a, d: d, busy: state.busy))
             .disabled(!state.enabled)
             .help(state.help)
             .accessibilityLabel(state.busy ? "Cleaning" : state.title)
@@ -286,12 +277,14 @@ struct OrbButton: View {
         .opacity(state.visible ? 1 : 0)
         .allowsHitTesting(state.visible)
         .animation(.spring(response: 0.55, dampingFraction: 0.62), value: state.visible)
-        .animation(.smooth(duration: 0.35), value: state.progress == nil)
+        .animation(.smooth(duration: 0.35), value: state.progress == nil && !state.busy)
     }
 
     @ViewBuilder var label: some View {
         if state.busy {
-            ProgressView().controlSize(.regular).tint(.white)
+            // The ring around the orb shows the work; inside, just the word.
+            Text("Cleaning").font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.92))
+                .shadow(color: .black.opacity(0.2), radius: 1.5, y: 1)
         } else {
             Text(state.title)
                 .font(.system(size: state.title.count > 5 ? 15 : 17, weight: .medium, design: state.progress == nil ? .default : .rounded))
@@ -311,12 +304,13 @@ struct Aura: View {
     var d: CGFloat
     var strength: Double
     var body: some View {
+        // Neighbouring hues, heavily blurred and faint, so they melt into one soft light instead of reading as blobs.
         ZStack {
-            Circle().fill(tint.mix(with: .white, by: 0.08)).frame(width: d * 2.0, height: d * 2.0).blur(radius: 42).opacity(0.62 * strength)
-            Circle().fill(tint.hueShifted(72).mix(with: .white, by: 0.06)).frame(width: d * 1.2, height: d * 1.2).blur(radius: 30)
-                .offset(x: -d * 0.4, y: -d * 0.1).opacity(0.6 * strength)
-            Circle().fill(tint.hueShifted(-78).mix(with: .white, by: 0.06)).frame(width: d * 1.1, height: d * 1.1).blur(radius: 30)
-                .offset(x: d * 0.38, y: d * 0.1).opacity(0.55 * strength)
+            Circle().fill(tint.mix(with: .white, by: 0.12)).frame(width: d * 2.3, height: d * 2.3).blur(radius: 64).opacity(0.34 * strength)
+            Circle().fill(tint.hueShifted(26).mix(with: .white, by: 0.1)).frame(width: d * 1.5, height: d * 1.5).blur(radius: 52)
+                .offset(x: -d * 0.32, y: -d * 0.08).opacity(0.26 * strength)
+            Circle().fill(tint.hueShifted(-28).mix(with: .white, by: 0.1)).frame(width: d * 1.4, height: d * 1.4).blur(radius: 52)
+                .offset(x: d * 0.3, y: d * 0.08).opacity(0.24 * strength)
         }
     }
 }
@@ -327,6 +321,8 @@ struct Aura: View {
 struct OrbStyle: ButtonStyle {
     var tint: Color
     var d: CGFloat
+    /// Working: not clickable, but never greyed out.
+    var busy = false
     @State private var hover = false
     @Environment(\.isEnabled) var enabled
 
@@ -334,24 +330,56 @@ struct OrbStyle: ButtonStyle {
         configuration.label
             .background {
                 ZStack {
-                    Circle().fill(RadialGradient(colors: [tint.mix(with: .white, by: 0.32), tint, tint.mix(with: .black, by: 0.42)],
-                                                 center: UnitPoint(x: 0.5, y: 0.3), startRadius: 0, endRadius: d * 0.62))
-                    Circle().fill(RadialGradient(colors: [tint.hueShifted(20).mix(with: .white, by: 0.5).opacity(0.75), .clear],
-                                                 center: UnitPoint(x: 0.5, y: 1.08), startRadius: 0, endRadius: d * 0.55))
+                    // Liquid rather than sculpted: an even, gently lit fill, light pooling softly at the bottom, a
+                    // diffuse sheen instead of a hard highlight, and a hairline rim.
+                    Circle().fill(RadialGradient(colors: [tint.mix(with: .white, by: 0.22), tint, tint.mix(with: .black, by: 0.18)],
+                                                 center: UnitPoint(x: 0.5, y: 0.35), startRadius: 0, endRadius: d * 0.7))
+                    Circle().fill(RadialGradient(colors: [tint.hueShifted(16).mix(with: .white, by: 0.45).opacity(0.5), .clear],
+                                                 center: UnitPoint(x: 0.5, y: 1.0), startRadius: 0, endRadius: d * 0.6))
                         .blendMode(.screen)
-                    Ellipse().fill(LinearGradient(colors: [.white.opacity(0.42), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
-                        .frame(width: d * 0.66, height: d * 0.34).offset(y: -d * 0.27).blur(radius: 2)
-                    Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.8), .white.opacity(0.18), .white.opacity(0.45)],
-                                                         startPoint: .top, endPoint: .bottom), lineWidth: 1.3)
-                    Circle().stroke(.black.opacity(0.14), lineWidth: 0.6).padding(-0.4)
+                    Ellipse().fill(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0)], startPoint: .top, endPoint: .bottom))
+                        .frame(width: d * 0.78, height: d * 0.42).offset(y: -d * 0.22).blur(radius: 6)
+                    Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.1), .white.opacity(0.3)],
+                                                         startPoint: .top, endPoint: .bottom), lineWidth: 0.8)
                 }
-                .shadow(color: tint.mix(with: .black, by: 0.55).opacity(0.5), radius: 12, y: 7)
+                .shadow(color: tint.mix(with: .black, by: 0.4).opacity(0.28), radius: 10, y: 3)
             }
-            .saturation(enabled ? 1 : 0.3)
-            .opacity(enabled ? 1 : 0.72)
+            .saturation(enabled || busy ? 1 : 0.3)
+            .opacity(enabled || busy ? 1 : 0.72)
             .scaleEffect(configuration.isPressed ? 0.93 : hover && enabled ? 1.04 : 1)
             .animation(.spring(response: 0.28, dampingFraction: 0.55), value: configuration.isPressed)
             .animation(.spring(response: 0.35, dampingFraction: 0.65), value: hover)
             .onHover { hover = $0 }
+    }
+}
+
+/// A ring of liquid light around the orb. With a fraction it fills from the top (a scan's progress); without one it
+/// flows round, its arc stretching and easing as it turns (a clean that's running). A blurred copy underneath gives it
+/// the soft, wet edge; reduced motion keeps it still.
+struct LiquidRing: View {
+    var tint: Color
+    var d: CGFloat
+    var progress: Double?
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(paused: progress != nil || reduceMotion)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate
+            let length = progress.map { max(0.02, min(1, $0)) } ?? (reduceMotion ? 0.32 : 0.3 + 0.16 * sin(t * 2.1))
+            let turn = progress == nil && !reduceMotion ? (t.truncatingRemainder(dividingBy: 1.8) / 1.8) * 360 : 0
+            // Flowing: a tail that fades in. Progress: visible from its very start, so the fill reads true.
+            let tail = progress == nil ? tint.mix(with: .white, by: 0.2).opacity(0) : tint.mix(with: .white, by: 0.3).opacity(0.75)
+            let light = AngularGradient(colors: [tail, tint.mix(with: .white, by: 0.35), .white.opacity(0.95)],
+                                        center: .center, startAngle: .degrees(0), endAngle: .degrees(360 * length))
+            ZStack {
+                Circle().stroke(tint.mix(with: .white, by: 0.3).opacity(0.14), lineWidth: 4)
+                Circle().trim(from: 0, to: length).stroke(light, style: StrokeStyle(lineWidth: 10, lineCap: .round)).blur(radius: 7).opacity(0.55)
+                Circle().trim(from: 0, to: length).stroke(light, style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+            }
+            .rotationEffect(.degrees(turn - 90))
+            .animation(progress == nil ? nil : .smooth(duration: 0.6), value: length)
+        }
+        .frame(width: d + 20, height: d + 20)
+        .allowsHitTesting(false)
     }
 }

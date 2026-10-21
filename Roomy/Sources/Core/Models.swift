@@ -54,7 +54,7 @@ struct CleanItem: Codable, Identifiable, Hashable {
     /// Found by Mole and removed only by Mole's own clean, which applies its protections at removal time.
     /// Roomy never removes these paths itself: a ledger line can name a folder Mole only cleans inside.
     var byMole: Bool? = nil
-    /// Found by Roomy's own rules (`RoomyRules`): the bundle ID of the app it belongs to. Re-checked at removal.
+    /// Legacy cached snapshot metadata; Checkup now delegates exclusively to Mole.
     var app: String? = nil
 }
 

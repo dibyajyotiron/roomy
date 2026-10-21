@@ -67,17 +67,15 @@ struct CategoryScreen: View {
     var route: Route
 
     var cats: [CleanCategory] { route.categories.compactMap { model.snap.category($0) } }
-    var selected: [CleanItem] { cats.flatMap(\.items).filter { $0.byMole != true && model.selection.contains($0.path) } }
     var moleBytes: Int64 { cats.flatMap(\.items).filter { $0.byMole == true }.reduce(0) { $0 + $1.bytes } }
-    var hasOwnItems: Bool { cats.flatMap(\.items).contains { $0.byMole != true } }
 
     var subtitle: String {
         switch route {
         case .systemJunk: "Logs, system caches and temporary files macOS rebuilds."
         case .userCache: "App and browser caches that rebuild themselves. Caches of apps that are open right now are skipped."
-        case .developer: "Xcode build products, Homebrew downloads, npm and pnpm stores, and Docker build cache. Docker volumes and containers are never touched."
+        case .developer: "Xcode build products, Homebrew downloads, npm and pnpm stores, and Docker build cache. Mole applies its normal developer cleanup rules."
         case .mail: "Attachments Mail already downloaded. The messages stay in Mail and download them again when you open them."
-        case .trash: "What's in your Trash bins, including on external drives. Checkup never empties the Trash: it's your undo."
+        case .trash: "What's in your Trash bins, including on external drives. Mole's normal Clean also empties Trash unless protected by your Mole keep list."
         case .systemData: "Local Time Machine snapshots, failed backups, iPhone and iPad backups, firmware and update files."
         default: ""
         }
@@ -86,7 +84,7 @@ struct CategoryScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             let toReview = cats.flatMap(\.items).filter(\.review).reduce(0) { $0 + $1.bytes }
-            ScreenHeader(title: route.title, subtitle: subtitle, value: cats.isEmpty ? nil : Fmt.bytes(cats.reduce(0) { $0 + $1.bytes }), valueCaption: "can be cleaned",
+            ScreenHeader(title: route.title, subtitle: subtitle, value: cats.isEmpty ? nil : Fmt.bytes(cats.reduce(0) { $0 + $1.bytes }), valueCaption: "estimated by Mole",
                          valueDetail: toReview > 0 ? "\(Fmt.bytes(toReview)) waits for you to choose" : nil)
             if cats.isEmpty { NotScannedYet(); Spacer() } else {
                 ScrollView {
@@ -101,14 +99,9 @@ struct CategoryScreen: View {
                     }
                     .padding(.horizontal, 28).padding(.bottom, 20)
                 }
-                if hasOwnItems {
-                    FooterBar(bytes: selected.reduce(0) { $0 + $1.bytes }, count: selected.count, label: "Clean",
-                              note: "Docker items run Docker's own prune command. Everything else here is cleaned from Checkup.") {
-                        Task { await model.clean(route.title, targets: selected.map { Actions.Target(path: $0.path, bytes: $0.bytes, command: $0.command) }) }
-                    }
-                } else if moleBytes > 0 {
+                if moleBytes > 0 {
                     FooterBar(bytes: moleBytes, count: cats.flatMap(\.items).count, label: "Clean",
-                              note: "Cleaned together with everything in Checkup's bag, each re-checked at the moment of removal") {
+                              note: "Review together with Mole's other findings before running its normal Clean") {
                         model.cleanRequested = true
                         model.route = .care
                     }
@@ -131,7 +124,7 @@ struct CategoryScreen: View {
                 ForEach(Array(c.items.enumerated()), id: \.element.id) { i, it in
                     if i > 0 { RowDivider() }
                     ItemRow(path: it.path, title: it.name, subtitle: [Paths.short(it.path).hasPrefix("docker:") ? nil : Paths.short(it.path), it.note].compactMap { $0 }.joined(separator: " · "),
-                            bytes: it.bytes, mode: it.byMole == true ? .managed("Cleaned from Checkup") : .select, on: model.selection.contains(it.path)) { model.toggle(it.path) }
+                            bytes: it.bytes, mode: .managed("Preview · cleaned from Checkup"))
                         .transition(.movingParts.vanish(Palette.accent.opacity(0.5)))
                 }
             }
@@ -144,7 +137,7 @@ struct CategoryScreen: View {
             } }
         }
         if !c.kept.isEmpty {
-            Text("Docker volumes, containers and images aren't cache, so Roomy never lists them for cleaning. Manage them in Docker.")
+            Text("Mole reported these as kept in this preview.")
                 .font(.system(size: 12)).foregroundStyle(Palette.ink3).padding(.top, 8).padding(.horizontal, 2)
         }
         if c.items.isEmpty && c.blocked == nil && c.skipped == nil && c.held.isEmpty && c.kept.isEmpty {
@@ -252,7 +245,8 @@ struct SimpleListScreen: View {
 
     func row(_ it: CleanItem) -> some View {
         ItemRow(path: it.path, title: it.name, subtitle: [Paths.short(it.path), it.note].compactMap { $0 }.joined(separator: " · "),
-                bytes: it.bytes, mode: it.byMole == true ? .managed("Cleaned from Checkup") : .select, on: model.selection.contains(it.path)) { model.toggle(it.path) }
+                bytes: it.bytes, mode: it.byMole == true ? .managed("Preview · cleaned from Checkup") : .select,
+                on: model.selection.contains(it.path)) { model.toggle(it.path) }
             .transition(.movingParts.vanish(Palette.accent.opacity(0.5)))
     }
 
@@ -343,7 +337,7 @@ struct SlimmingView: View {
     }
 }
 
-/// Your Trash, measured directly. Checkup never empties it; this is the one place that does, after you confirm.
+/// A separate manual Trash action, with confirmation. Normal Mole Clean may also empty Trash.
 struct TrashCard: View {
     @Environment(AppModel.self) var model
     @State private var bytes: Int64?

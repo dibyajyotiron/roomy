@@ -23,13 +23,11 @@ struct CheckupView: View {
     /// What's in the room: one bucket per place Checkup cleans, plus your own files, which stay.
     var buckets: [RoomScene.Bucket] {
         let s = model.snap
-        var out: [RoomScene.Bucket] = [Route.systemJunk, .userCache, .developer, .mail, .systemData].map { r in
+        var out: [RoomScene.Bucket] = [Route.systemJunk, .userCache, .developer, .mail, .trash, .systemData].map { r in
             let b = r.categories.compactMap { s.category($0) }.flatMap(\.items)
-                .filter { $0.byMole == true || ($0.app != nil && model.selection.contains($0.path)) }.reduce(0) { $0 + $1.bytes }
+                .filter { $0.byMole == true }.reduce(0) { $0 + $1.bytes }
             return RoomScene.Bucket(key: r.rawValue, step: "cleanup", color: NSColor(r.gradient.last ?? .gray), bytes: b, removable: true)
         }
-        out.append(RoomScene.Bucket(key: Route.aiCare.rawValue, step: "ai", color: NSColor(Route.aiCare.gradient.last ?? .gray),
-                                    bytes: model.aiCheckupItems.reduce(0) { $0 + $1.bytes }, removable: true))
         out.append(RoomScene.Bucket(key: Route.large.rawValue, step: "large", color: .brown, bytes: reviewBytes, removable: false))
         return out
     }
@@ -84,14 +82,14 @@ struct CheckupView: View {
         }
         .onAppear { syncOrb(); orb.state.action = primary }
         .onAppear {
-            // Clean pressed on a cleanup module: the bag fills from what was found, then goes into the bin.
+            // Clean pressed on a cleanup module: settle the findings, then open the review.
             guard model.cleanRequested else { return }
             model.cleanRequested = false
             guard model.checkupBytes > 0, !model.scanIsStale, model.phase != .scanning else { return }
             model.awaitingClean = true
             model.phase = .done
             room.settle(buckets, animated: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { clean() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { showReview = true }
         }
         .onChange(of: orbKey) { syncOrb() }
         .onChange(of: model.theme.id) { syncOrb() }
@@ -145,7 +143,7 @@ struct CheckupView: View {
     var idle: some View {
         VStack(spacing: 10) {
             Text("Let's make some room").font(.system(size: 42, weight: .bold)).tracking(-0.9)
-            Text("Checkup gathers caches, logs and leftovers into one bag, puts your own files back on the shelf, and shows you everything before anything is removed.")
+            Text("Checkup gathers caches, logs and leftovers into one bag, puts your own files back on the shelf, and shows Mole’s cleanup preview before you choose Clean.")
                 .font(.system(size: 15)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -204,14 +202,14 @@ struct CheckupView: View {
                 Text(Fmt.bytes(safeBytes)).font(.system(size: 60, weight: .bold, design: .rounded)).monospacedDigit().tracking(-1)
                     .contentTransition(.numericText(value: Double(safeBytes)))
                 Text(model.awaitingClean && model.scanIsStale ? "found more than an hour ago. Scan again before cleaning."
-                     : safeBytes > 0 ? "in the bag and safe to clean" : "Nothing left that's safe to clean automatically")
+                     : safeBytes > 0 ? "estimated by Mole’s preview" : "Mole found nothing more to clean")
                     .font(.system(size: 16, weight: .medium)).foregroundStyle(.secondary)
                 if model.awaitingClean && safeBytes > 0 && !model.scanIsStale {
                     Button { showReview = true } label: {
                         Label("Review what's in the bag", systemImage: "list.bullet").font(.system(size: 13, weight: .medium)).padding(.horizontal, 4)
                     }
                     .buttonStyle(.glass).tint(model.theme.accent ?? .accentColor).controlSize(.large).padding(.top, 10)
-                    .help("See and choose everything Clean will remove")
+                    .help("See Mole’s grouped cleanup preview")
                     .disabled(cleaning)
                 }
             }
@@ -254,7 +252,7 @@ struct CheckupView: View {
     func primary() {
         switch model.phase {
         case .scanning: return
-        case .done where model.awaitingClean && !model.scanIsStale: clean()
+        case .done where model.awaitingClean && !model.scanIsStale: showReview = true
         default: model.scanAll()
         }
     }

@@ -39,8 +39,8 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Roomy
-        CFBundleShortVersionString: "0.1.1"
-        CFBundleVersion: "101"
+        CFBundleShortVersionString: "0.2.3"
+        CFBundleVersion: "203"
         LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "GPL-3.0. Cleans with Mole (GPL-3.0)."

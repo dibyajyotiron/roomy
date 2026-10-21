@@ -20,6 +20,13 @@ enum Shell {
         return nil
     }
 
+    /// Literal shell argument for the explicit Terminal fallback; normal processes use argv directly.
+    static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    static func validBrewToken(_ value: String) -> Bool {
+        value.range(of: #"\A[A-Za-z0-9][A-Za-z0-9+_.@-]*(?:/[A-Za-z0-9][A-Za-z0-9+_.@-]*){0,2}\z"#, options: .regularExpression) != nil
+    }
+
     struct Result {
         var output: String
         var status: Int32
@@ -58,6 +65,39 @@ enum Shell {
                 cont.resume(returning: Result(output: String(decoding: data, as: UTF8.self), status: p.terminationStatus))
             }
         }
+    }
+}
+
+/// Inspect repositories without running their fsmonitor hooks or inheriting a caller's Git overrides.
+/// These settings apply only to Roomy's explicit Git operations, not to Mole's cleanup policy.
+enum GitInspection {
+    static func environment(from original: [String: String] = Shell.baseEnvironment) -> [String: String] {
+        var env = original.filter { key, _ in
+            !key.hasPrefix("GIT_") && !key.hasPrefix("BASH_FUNC_")
+                && !["BASH_ENV", "ENV", "ZDOTDIR"].contains(key)
+        }
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        return env
+    }
+
+    static func run(at path: String, _ command: [String], timeout: TimeInterval = 30) async -> Shell.Result {
+        await Shell.run("/usr/bin/git", ["--no-optional-locks", "-c", "core.fsmonitor=false",
+                                        "-c", "core.hooksPath=/dev/null", "-c", "submodule.recurse=false",
+                                        "-C", path] + command,
+                        environment: environment(), timeout: timeout)
+    }
+
+    static func status(at path: String) async -> Shell.Result {
+        await run(at: path, ["status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"])
+    }
+
+    /// A failed or incomplete inspection never counts as a clean worktree.
+    static func cleanWorktreeProblem(_ result: Shell.Result) -> String? {
+        if !result.ok { return "Git couldn't verify this worktree. Open it and resolve the problem before removing it." }
+        if !result.output.trimmed.isEmpty { return "This worktree has uncommitted or untracked files. Keep it until they are saved." }
+        return nil
     }
 }
 

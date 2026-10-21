@@ -22,7 +22,8 @@ enum Paths {
         (try? FileManager.default.attributesOfItem(atPath: expand(p)))?[.modificationDate] as? Date
     }
     static let support: URL = {
-        let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Roomy")
+        let folder = Bundle.main.bundleIdentifier == "app.roomy.v2" ? "Roomy v2" : "Roomy"
+        let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(folder)
         try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
         return u
     }()

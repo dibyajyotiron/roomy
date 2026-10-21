@@ -1,0 +1,6 @@
+# Mole 1.61.0 at MOLE_COMMIT. Update these only after reviewing the upstream change.
+5542a681938898fb5f4b9a35989947aad16b6329ccd8dd9084ec91d9dd014bdc  source.tar.gz
+7d25c9999c93de489c4aa2c2f538873145de8d5f77eb67f32a5942785d4351b8  analyze-darwin-arm64
+75402ecb15dfb40ae348b27cdff3a9d5024941bb130d2951a8544be40f97e820  status-darwin-arm64
+918b9051ff51518445c2759b4a7f08ed029319373b9ea0f70df82dc877c02119  analyze-darwin-amd64
+9e0dc50459902d0b114ea1430d5611aab4982a689f3a8cd5231efe716ca3a954  status-darwin-amd64

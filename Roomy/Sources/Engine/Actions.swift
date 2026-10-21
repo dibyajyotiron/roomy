@@ -1,7 +1,7 @@
 import Foundation
 import MoleCore
 
-/// Everything that changes the disk goes through here.
+/// Selected native cleanup actions. Checkup delegates separately to Mole.
 /// - Safe mode (the default) only records what would happen.
 /// - Files go to the Trash, never straight to deletion, after MoleCore's path-safety checks.
 /// - Things a tool manages are removed with that tool's own command (`docker builder prune`, `git worktree remove`…).
@@ -11,6 +11,8 @@ enum Actions {
         var bytes: Int64
         var command: [String]? = nil
         var directory: String? = nil
+        var aiTool: String? = nil
+        var requiresCleanWorktree = false
     }
 
     struct Report {
@@ -70,9 +72,18 @@ enum Actions {
             return rep
         }
         for t in targets {
+            if let tool = t.aiTool, let why = await AICareEngine.heldNow(tool) { rep.fail(t.path, why); continue }
+            if t.requiresCleanWorktree, let why = GitInspection.cleanWorktreeProblem(await GitInspection.status(at: Paths.expand(t.path))) {
+                rep.fail(t.path, why); continue
+            }
             if !allowApps, t.command == nil, isAppPath(Paths.expand(t.path)) { rep.fail(t.path, "Only Uninstaller removes apps"); continue }
             if let cmd = t.command, let exe = cmd.first {
-                let r = await Shell.run(exe, Array(cmd.dropFirst()), timeout: 900, directory: t.directory)
+                let r: Shell.Result
+                if exe == "git", let directory = t.directory {
+                    r = await GitInspection.run(at: directory, Array(cmd.dropFirst()), timeout: 900)
+                } else {
+                    r = await Shell.run(exe, Array(cmd.dropFirst()), timeout: 900, directory: t.directory)
+                }
                 if r.ok { rep.removed += t.bytes; rep.count += 1; rep.done.append("\(Paths.short(t.path)) — \(Fmt.bytes(t.bytes))") } else { rep.fail(t.path, "\(exe) didn't finish: \(r.output.trimmed.suffix(120))") }
                 continue
             }
@@ -82,8 +93,6 @@ enum Actions {
                 rep.alreadyGone.append(t.path); continue
             }
             guard !isOffLimits(p) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
-            // Roomy's own rules check again now: the app may have opened, or an update started, since the scan.
-            if let why = await RoomyRules.heldNow(p) { rep.fail(t.path, why); continue }
             do {
                 try PathSafety.validate(p)
                 try safety.validateTrashTarget(p)

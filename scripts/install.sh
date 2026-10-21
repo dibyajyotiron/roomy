@@ -5,21 +5,25 @@
 #
 # Add a version to install that release instead, for example an older one to try an update:
 #
-#   curl -fsSL https://raw.githubusercontent.com/dibyajyotiron/roomy/main/scripts/install.sh | sh -s -- 0.0.2
+#   curl -fsSL https://raw.githubusercontent.com/dibyajyotiron/roomy/main/scripts/install.sh | sh -s -- 0.2.3
+#
+# Only releases from 0.2.3 on carry the signed manifest this script checks.
 #
 # What it does, in order:
 #   1. asks GitHub for the latest release tag (unless you gave a version)
-#   2. downloads Roomy-<version>.zip and Roomy-<version>.sha256 from that release into a temporary folder
-#   3. checks the zip against the published SHA-256 checksum, and stops if they don't match
+#   2. downloads the zip, signed release manifest, and signature into a private temporary folder
+#   3. authenticates the manifest with Roomy's pinned Ed25519 public key, then verifies the zip digest
 #   4. quits Roomy if it's running, then replaces /Applications/Roomy.app with the new copy
 #   5. makes sure you own the installed app, so Roomy can update itself later without a password
 #   6. opens Roomy
 #
-# It changes nothing outside /Applications/Roomy.app and its temporary folder, which it removes when it's done.
+# It stages and replaces /Applications/Roomy.app, using temporary folders that it removes when done.
 # It uses sudo only if your account can't write to /Applications, and says so first.
 #
-# Files downloaded with curl aren't marked as quarantined, so macOS doesn't ask you to click Open Anyway the way it
-# does for the .pkg downloaded in a browser.
+# The release is authenticated with Roomy's Ed25519 release key (the same key that signs its updates); that is not an
+# Apple Developer ID or notarization. Checking it needs Apple's Command Line Tools: without them nothing is installed.
+# Files downloaded with curl aren't quarantined, and this script doesn't add quarantine, so Roomy opens without the
+# Open Anyway step a browser download needs. The signature check above is what stands in for that first-open check.
 #
 # INSTALL_DIR=<folder> installs into that folder instead of /Applications and leaves any running Roomy alone. It's
 # for testing this script only.
@@ -48,6 +52,10 @@ main() {
   MACOS_MAJOR=$(sw_vers -productVersion | cut -d. -f1)
   [ "$MACOS_MAJOR" -ge 26 ] || fail "Roomy needs macOS 26 or later (this Mac has $(sw_vers -productVersion))."
   [ -d "$INSTALL_DIR" ] || fail "$INSTALL_DIR doesn't exist."
+  INSTALL_DIR=$(cd "$INSTALL_DIR" && pwd -P)
+  APP="$INSTALL_DIR/Roomy.app"
+  [ ! -L "$APP" ] || fail "Refusing to replace a symlink at $APP."
+  xcrun --find swiftc >/dev/null 2>&1 || fail "Checking Roomy's release signature needs Apple's Command Line Tools. Install them with: xcode-select --install, then run this again. Or download the .pkg from the release page. Nothing was installed."
 
   TMP=$(mktemp -d)
   trap 'rm -rf "$TMP"' EXIT
@@ -67,28 +75,69 @@ main() {
     *[!0-9.]* | "" | .* | *.) fail "Couldn't tell which release to install (got '$TAG'). Give a version like 0.0.2." ;;
   esac
   ZIP="Roomy-$VERSION.zip"
-  SUMS="Roomy-$VERSION.sha256"
+  MANIFEST=release-manifest.json
+  SIGNATURE=release-manifest.sig
   BASE="https://github.com/$REPO/releases/download/$TAG"
 
   # 2. Download
 
   say "Downloading Roomy $VERSION"
   curl -fL --progress-bar -o "$TMP/$ZIP" "$BASE/$ZIP" || fail "Couldn't download $ZIP. Is $VERSION a Roomy release?"
-  curl -fsSL -o "$TMP/$SUMS" "$BASE/$SUMS"
+  curl -fsSL -o "$TMP/$MANIFEST" "$BASE/$MANIFEST"
+  curl -fsSL -o "$TMP/$SIGNATURE" "$BASE/$SIGNATURE"
 
   # 3. Verify
 
-  EXPECTED=$(awk -v f="$ZIP" '$2 == f { print $1 }' "$TMP/$SUMS")
-  [ -n "$EXPECTED" ] || fail "$SUMS has no checksum for $ZIP. Nothing was installed."
-  ACTUAL=$(shasum -a 256 "$TMP/$ZIP" | awk '{ print $1 }')
-  if [ "$ACTUAL" != "$EXPECTED" ]; then
-    fail "Checksum mismatch for $ZIP (expected $EXPECTED, got $ACTUAL). Nothing was installed."
-  fi
-  say "Checksum verified ($ACTUAL)"
+  # This verifier is part of the reviewed installer, never downloaded from a release asset.
+  cat > "$TMP/verify.swift" <<'ROOMY_VERIFY_SWIFT'
+import Foundation
+import CryptoKit
 
-  # curl doesn't mark downloads as quarantined, so normally there's nothing to remove. If something on this Mac did mark
-  # the zip, clear the mark from that one file this script downloaded, so the app unzipped from it doesn't inherit it.
-  xattr -d com.apple.quarantine "$TMP/$ZIP" 2>/dev/null || true
+func verify(_ key: String, _ signature: Data, _ payload: Data) throws {
+    guard let bytes = Data(base64Encoded: key), let sig = Data(base64Encoded: String(decoding: signature, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)),
+          let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: bytes), publicKey.isValidSignature(sig, for: payload) else {
+        throw NSError(domain: "RoomyRelease", code: 1, userInfo: [NSLocalizedDescriptionKey: "Release signature did not verify"])
+    }
+}
+
+do {
+    let a = CommandLine.arguments
+    if a.count == 2 && a[1] == "--self-test" {
+        let key = Curve25519.Signing.PrivateKey()
+        let payload = Data("Roomy verification fixture".utf8)
+        let signature = try key.signature(for: payload).base64EncodedData()
+        try verify(key.publicKey.rawRepresentation.base64EncodedString(), signature, payload)
+        var rejected = false
+        do { try verify(key.publicKey.rawRepresentation.base64EncodedString(), signature, payload + Data([0])) }
+        catch { rejected = true }
+        guard rejected else { throw NSError(domain: "RoomyRelease", code: 2) }
+        print("Ed25519: valid fixture accepted; tampered fixture rejected")
+    } else {
+        guard a.count == 4 || a.count == 6 else {
+            throw NSError(domain: "RoomyRelease", code: 3, userInfo: [NSLocalizedDescriptionKey: "usage: verifier public-key-base64 signature-file payload-file [version zip-file]"])
+        }
+        let payload = try Data(contentsOf: URL(fileURLWithPath: a[3]))
+        try verify(a[1], Data(contentsOf: URL(fileURLWithPath: a[2])), payload)
+        if a.count == 6 {
+            guard let manifest = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                  manifest["schema"] as? Int == 1, manifest["version"] as? String == a[4],
+                  let assets = manifest["assets"] as? [String: String],
+                  URL(fileURLWithPath: a[5]).lastPathComponent == "Roomy-\(a[4]).zip",
+                  let expected = assets["Roomy-\(a[4]).zip"] else { throw NSError(domain: "RoomyRelease", code: 4) }
+            let zip = try Data(contentsOf: URL(fileURLWithPath: a[5]), options: .mappedIfSafe)
+            let actual = SHA256.hash(data: zip).map { String(format: "%02x", $0) }.joined()
+            guard actual == expected else { throw NSError(domain: "RoomyRelease", code: 5, userInfo: [NSLocalizedDescriptionKey: "Archive checksum did not match the signed manifest"]) }
+        }
+        print("Release signature verified")
+    }
+} catch {
+    fputs("Release verification failed: \(error.localizedDescription)\n", stderr)
+    exit(1)
+}
+ROOMY_VERIFY_SWIFT
+  xcrun swiftc -module-cache-path "$TMP/module-cache" "$TMP/verify.swift" -o "$TMP/verify"
+  "$TMP/verify" "KmDoLhHTW4ettZXyEMZMFjgPk3i01x0RFYzE+unlrtg=" "$TMP/$SIGNATURE" "$TMP/$MANIFEST" "$VERSION" "$TMP/$ZIP" \
+    || fail "The release signature or archive digest didn't verify. Nothing was installed."
 
   ditto -x -k "$TMP/$ZIP" "$TMP/unzipped"
   NEW="$TMP/unzipped/Roomy.app"
@@ -98,6 +147,9 @@ main() {
   if ! codesign --verify --deep --strict "$NEW" 2>/dev/null; then
     fail "Roomy.app's code signature doesn't verify. Nothing was installed."
   fi
+
+  # No quarantine: the release signature, archive digest, bundle ID and code signature above were all verified, and an
+  # unnotarized app with quarantine is simply blocked on first open. curl itself never adds quarantine.
 
   # 4. Install
 
@@ -119,8 +171,22 @@ main() {
   fi
 
   say "Installing Roomy $VERSION in $INSTALL_DIR"
-  $SUDO rm -rf "$APP"
-  $SUDO ditto "$NEW" "$APP"
+  # Stage a complete replacement first. Keep the previous app until the replacement is in place.
+  STAGE=$($SUDO mktemp -d "$INSTALL_DIR/.roomy-install.XXXXXX")
+  if ! $SUDO ditto "$NEW" "$STAGE/Roomy.app"; then
+    $SUDO rm -rf "$STAGE"
+    fail "Couldn't stage the new app. The installed copy was preserved."
+  fi
+  HAD_PREVIOUS=0
+  if [ -e "$APP" ]; then $SUDO mv "$APP" "$STAGE/previous.app"; HAD_PREVIOUS=1; fi
+  if ! $SUDO mv "$STAGE/Roomy.app" "$APP"; then
+    if [ "$HAD_PREVIOUS" = 1 ] && ! $SUDO mv "$STAGE/previous.app" "$APP"; then
+      fail "Couldn't restore the previous app. It is preserved at $STAGE/previous.app."
+    fi
+    $SUDO rm -rf "$STAGE"
+    fail "Couldn't replace the app. Any previous copy was restored."
+  fi
+  $SUDO rm -rf "$STAGE"
 
   # 5. Ownership
 

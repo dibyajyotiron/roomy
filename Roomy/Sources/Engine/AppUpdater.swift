@@ -44,6 +44,7 @@ final class AppUpdater: NSObject {
     /// Starts the daily check. Off in demo mode and in builds without an update key (development builds).
     func start() {
         guard updater == nil, !Demo.on,
+              Bundle.main.object(forInfoDictionaryKey: "RoomyDisableUpdates") as? Bool != true,
               (Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String)?.isEmpty == false,
               Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") is String else { return }
         let u = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: self, delegate: self)

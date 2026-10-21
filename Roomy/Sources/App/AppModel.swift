@@ -36,7 +36,7 @@ enum Route: String, CaseIterable, Identifiable, Codable {
     /// Cleanup categories each screen lists.
     var categories: [String] {
         switch self {
-        case .systemJunk: ["systemJunk"]; case .userCache: ["userCache"]
+        case .systemJunk: ["systemJunk"]; case .userCache: ["userCache", "aiApps"]
         case .developer: ["xcodeJunk", "brewCache", "nodeCache", "devTools", "dockerCache"]
         case .mail: ["mailAttachments"]; case .trash: ["trashBins"]; case .systemData: ["systemData"]
         default: []
@@ -82,7 +82,7 @@ struct Snapshot: Codable {
     var moleVersion: String?
     /// Mole's own total for its clean (its preview's "Potential cleanup").
     var moleTotal: Int64?
-    /// Your Trash, measured at scan time. Checkup shows it but never empties it.
+    /// Your Trash, measured at scan time. Normal Mole Clean may empty it.
     var trashBytes: Int64?
 
     func category(_ key: String) -> CleanCategory? { categories.first { $0.key == key } }
@@ -181,8 +181,7 @@ final class AppModel {
     init() {
         Theme.currentAccent = theme.accent ?? .accentColor
         Theme.current = theme
-        MoleWhitelist.restore()   // in case Roomy quit in the middle of a clean
-        MoleWhitelist.restoreOptimize()
+        let legacyProblems = MoleLegacySettings.recover(config: URL(fileURLWithPath: Mole.config), support: Paths.support)
         if let demo = Demo.snapshot {
             if let d = try? Data(contentsOf: URL(fileURLWithPath: demo)), let s = try? JSONDecoder().decode(Snapshot.self, from: d) { snap = s }
             hasFullDiskAccess = true
@@ -194,10 +193,12 @@ final class AppModel {
             repairEmptyCleans()
             snap.disk = ExtrasEngine.disk()
         }
+        for i in snap.categories.indices { snap.categories[i].items.removeAll { $0.byMole != true } }
         for i in snap.leftovers.indices where !AppsEngine.mayPreselect(snap.leftovers[i].path) { snap.leftovers[i].review = true }
         if snap.categories.isEmpty == false { preselect(); preselectAI() }
         if !Demo.on { scannedParts = partsInSnapshot() }
         MoleCheck.removeOldDownloads()
+        if !legacyProblems.isEmpty { flash(legacyProblems.joined(separator: " ")) }
         AppUpdater.shared.start()
         UninstallWatcher.shared.start(onFound: { [weak self] items in self?.addLeftovers(items) },
                                       onReturned: { [weak self] apps in self?.dropLeftovers(of: apps) },
@@ -261,7 +262,6 @@ final class AppModel {
         finished = []
         running = Set(Self.steps.map(\.id))
         snap.leftovers = []
-        checkupSkip = []
         Task {
             snap.disk = ExtrasEngine.disk()
             snap.moleVersion = await Mole.version()
@@ -504,115 +504,49 @@ final class AppModel {
 
     func toggle(_ id: String) { if selection.contains(id) { selection.remove(id) } else { selection.insert(id) } }
 
-    /// Everything Mole found: its clean removes all of it, with its own checks.
+    /// Mole's last dry-run findings. This is an estimate, not a fixed execution manifest.
     var moleItems: [CleanItem] {
-        (snap.categories.flatMap(\.items).filter { $0.byMole == true } + snap.leftovers.filter { $0.byMole == true }).filter { !Self.inTrash($0.path) }
+        snap.categories.flatMap(\.items).filter { $0.byMole == true } + snap.leftovers.filter { $0.byMole == true }
     }
-    /// Your Trash is never cleaned by Checkup: anything in it is left out of every total and list.
-    nonisolated static func inTrash(_ p: String) -> Bool { let x = Paths.expand(p); return x == HOME + "/.Trash" || x.hasPrefix(HOME + "/.Trash/") }
-    /// Mole's findings you unticked in Checkup's review. Mole keeps them for that clean.
-    var checkupSkip: Set<String> = []
-    /// True while any clean runs; every Clean button waits for it.
     var isCleaning = false
-    /// The last Checkup clean, shown on Checkup until the next scan.
     var lastResult: HistoryEntry?
-    var moleSelected: [CleanItem] { moleItems.filter { !checkupSkip.contains($0.path) } }
-    /// What Mole's clean will remove: Mole's own total, or the ticked items once you've unticked some.
-    var moleCleanable: Int64 {
-        // Mole's own total, unless it counted anything in the Trash (an older preview): then add up the items instead.
-        let trashed = snap.categories.flatMap(\.items).contains { $0.byMole == true && Self.inTrash($0.path) }
-        return checkupSkip.isEmpty && !trashed ? (snap.moleTotal ?? moleItems.reduce(0) { $0 + $1.bytes }) : moleSelected.reduce(0) { $0 + $1.bytes }
-    }
+    var moleCleanable: Int64 { snap.moleTotal ?? moleItems.reduce(0) { $0 + $1.bytes } }
+    var checkupBytes: Int64 { moleCleanable }
 
-    /// Roomy's own findings that Checkup removes (AI tool caches and old versions), minus anything inside a
-    /// folder Mole already covers, so nothing is counted or removed twice.
-    var checkupItems: [CleanItem] { aiCheckupItems + ruleItems }
-
-    /// What Roomy's own rules found (app update downloads, sandboxed apps' caches) and is ticked. They go to the
-    /// Trash through Actions, which checks each one again first.
-    var ruleItems: [CleanItem] {
-        snap.categories.filter(\.safe).flatMap(\.items).filter { $0.app != nil && $0.held == nil && selection.contains($0.path) }
-    }
-
-    /// Caches Roomy's rules found but left because their app is open, by app: what quitting it would add.
-    var quitToInclude: [(bundle: String, name: String, bytes: Int64)] {
-        let held = snap.categories.flatMap(\.held).filter { $0.app != nil && ($0.held ?? "").hasPrefix("Quit ") }
-        return Dictionary(grouping: held, by: { $0.app! }).map { b, items in
-            (b, RoomyRules.appName(b) ?? b, items.reduce(0) { $0 + $1.bytes })
-        }.sorted { $0.bytes > $1.bytes }
-    }
-
-    /// Quits these apps the way ⌘Q does (they ask about anything unsaved), waits for them, then scans the caches again.
-    func quit(_ bundles: [String]) async {
-        let apps = NSWorkspace.shared.runningApplications.filter { bundles.contains($0.bundleIdentifier ?? "") }
-        for a in apps { a.terminate() }
-        for _ in 0..<40 where !apps.allSatisfy(\.isTerminated) { try? await Task.sleep(for: .milliseconds(250)) }
-        let stayed = apps.filter { !$0.isTerminated }.compactMap(\.localizedName)
-        if !stayed.isEmpty { flash("\(stayed.joined(separator: " and ")) didn't quit, so \(stayed.count == 1 ? "its" : "their") cache stays.") }
-        rescan(.userCache)
-    }
-
-    /// AI tools' caches and old versions that Checkup removes.
-    var aiCheckupItems: [CleanItem] {
-        let roots = moleItems.map { Paths.expand($0.path) }
-        return snap.aiCare.clear.filter { selection.contains("ai:" + $0.path) }
-            .filter { i in let p = Paths.expand(i.path); return !roots.contains { p == $0 || p.hasPrefix($0 + "/") } }
-            .map { CleanItem(path: $0.path, name: $0.name, bytes: $0.bytes) }
-    }
-    var checkupBytes: Int64 { moleCleanable + checkupItems.reduce(0) { $0 + $1.bytes } }
-
-    /// Checkup's clean: Mole removes what Mole found, Roomy moves its own findings to the Trash.
+    /// Checkup delegates its entire cleanup to bundled Mole, with Mole's own settings and safeguards.
     @discardableResult
     func smartClean() async -> Actions.Report {
-        // One clean at a time: two Mole runs at once interleave in its log, so neither total could be trusted.
         guard !isCleaning else { return Actions.Report(simulated: safeMode) }
-        if !safeMode, await Mole.cleanRunning() {
-            flash("Another clean is already running. Try again when it's done.")
-            return Actions.Report(simulated: false)
-        }
         isCleaning = true
         defer { isCleaning = false }
-        let roomy = checkupItems.map { Actions.Target(path: $0.path, bytes: $0.bytes) }
         if safeMode {
-            var rep = await Actions.perform(roomy, simulate: true)
-            rep.removed += moleCleanable
-            let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: rep.removed, items: rep.count + moleSelected.count, simulated: true)
-            snap.history.insert(entry, at: 0)
-            lastResult = entry
+            var rep = Actions.Report(simulated: true)
+            rep.removed = moleCleanable; rep.count = moleItems.count
+            let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: rep.removed, items: rep.count, simulated: true)
+            snap.history.insert(entry, at: 0); lastResult = entry
             save()
-            flash(Demo.on ? "This is a demo, so nothing was removed." : "Safe mode: nothing was removed. It would have freed \(Fmt.bytes(rep.removed)).")
+            flash(Demo.on ? "This is a demo, so nothing was removed." : "Safe mode: nothing was removed. Mole's preview estimates \(Fmt.bytes(rep.removed)).")
             return rep
         }
-        let run = await Mole.runClean(keeping: moleItems.map(\.path).filter { checkupSkip.contains($0) })
-        var rep = await Actions.perform(roomy, simulate: false)
-        let freed = run.freed, trashed = rep.removed
-        // Temp folders of macOS's own background services refuse removal by design; that's protection, not failure.
-        let sealed = run.failed.filter { ($0.path.hasPrefix("/var/folders/") || $0.path.hasPrefix("/private/var/folders/")) && $0.reason.lowercased().contains("permission") }
-        let realFailures = run.failed.filter { f in !sealed.contains { $0.path == f.path } }
-        rep.failures = realFailures.map { "\(Paths.short($0.path)) — \($0.reason)" } + rep.failures
-        if !run.ran && run.count == 0 && !moleItems.isEmpty { rep.failures.insert("The clean didn't run, so nothing was removed. Scan again and retry.", at: 0) }
-        withAnimation(.smooth) {
-            // Mole's findings are gone or were protected by Mole; the next scan shows anything left.
-            let kept = checkupSkip
-            for i in snap.categories.indices { snap.categories[i].items.removeAll { $0.byMole == true && !kept.contains($0.path) } }
+        let run = await Mole.runClean()
+        var rep = Actions.Report(simulated: false)
+        rep.removed = run.freed; rep.count = run.count
+        rep.failures = run.failed.map { "\(Paths.short($0.path)) — \($0.reason)" }
+        if !run.ran { rep.failures.insert("Mole did not complete successfully. Review History and scan again.", at: 0) }
+        if run.ran {
+            for i in snap.categories.indices { snap.categories[i].items.removeAll { $0.byMole == true } }
             snap.leftovers.removeAll { $0.byMole == true }
             snap.moleTotal = 0
-            let gone = Set(roomy.map(\.path)).subtracting(rep.failedPaths)
-            snap.aiCare.clear.removeAll { gone.contains($0.path) }
-            for i in snap.categories.indices { snap.categories[i].items.removeAll { gone.contains($0.path) } }
-            selection.subtract(gone.map { "ai:" + $0 })
         }
         snap.disk = ExtrasEngine.disk()
-        let removedLines = run.removed.map { "\(Paths.short($0.path))" + ($0.bytes > 0 ? " — \(Fmt.bytes($0.bytes))" : "") } + rep.done
-        let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: freed + trashed, items: run.count + rep.count, simulated: false,
-                                 failures: rep.failures.isEmpty ? nil : rep.failures, trashed: trashed > 0 ? trashed : nil, removed: Array(removedLines.prefix(500)))
-        snap.history.insert(entry, at: 0)
-        lastResult = entry
+        let entry = HistoryEntry(date: Date(), title: "Checkup", bytes: run.freed, items: run.count, simulated: false,
+                                 failures: rep.failures.isEmpty ? nil : rep.failures,
+                                 removed: Array(run.removed.prefix(500).map { "\(Paths.short($0.path))" + ($0.bytes > 0 ? " — \(Fmt.bytes($0.bytes))" : "") }))
+        snap.history.insert(entry, at: 0); lastResult = entry
         save()
         // Mole's clean can take things other screens list (an old extension, a cache AI Cleanup shows too).
         pruneMissing()
-        let fails = rep.failures.isEmpty ? "" : " \(rep.failures.count) couldn't be removed; see History."
-        flash("Freed \(Fmt.bytes(freed))" + (trashed > 0 ? ", and moved \(Fmt.bytes(trashed)) to the Trash." : ".") + fails)
+        flash("Mole reports \(Fmt.bytes(run.freed)) freed." + (rep.failures.isEmpty ? "" : " Review History for skipped or failed operations."))
         return rep
     }
 
