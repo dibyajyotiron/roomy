@@ -24,7 +24,7 @@ defer { try? fm.removeItem(atPath: tmp) }
 func write(_ path: String, bytes: Int) throws {
     try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
     var data = Data(count: bytes)
-    data.withUnsafeMutableBytes { raw in for i in stride(from: 0, to: bytes, by: 4096) { raw[i] = UInt8(truncatingIfNeeded: i / 4096 + 1) } }
+    data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in for i in stride(from: 0, to: bytes, by: 4096) { raw[i] = UInt8(truncatingIfNeeded: i / 4096 + 1) } }
     try data.write(to: URL(fileURLWithPath: path))
 }
 func lsize(_ p: String) -> Int64 { var st = stat(); lstat(p, &st); return FileSizer.actualSize(st) }
