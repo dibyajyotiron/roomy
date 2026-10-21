@@ -122,7 +122,12 @@ enum AICareEngine {
         let vsc = Paths.children("~/.vscode/extensions").filter { Paths.name($0).hasPrefix("anthropic.claude-code-") }.sorted {
             $0.matches(#"\d+"#).prefix(3).compactMap { Int($0[0] ?? "") }.lexicographicallyPrecedes($1.matches(#"\d+"#).prefix(3).compactMap { Int($0[0] ?? "") })
         }
-        for q in vsc.dropLast() {
+        // Only what VS Code itself has let go: a folder its extensions.json no longer lists, or one it marked obsolete.
+        // Without that file Roomy can't tell which copy VS Code loads, so nothing is offered.
+        let vscIndex = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: Paths.expand("~/.vscode/extensions/extensions.json"))))) as? [[String: Any]]
+        let vscLoaded = Set((vscIndex ?? []).compactMap { $0["relativeLocation"] as? String })
+        let vscObsolete = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: Paths.expand("~/.vscode/extensions/.obsolete"))))) as? [String: Any]).map { Set($0.keys) } ?? []
+        for q in vsc.dropLast() where vscIndex != nil && (!vscLoaded.contains(Paths.name(q)) || vscObsolete.contains(Paths.name(q))) {
             care.clear.append(AIItem(tool: "claudecode", name: "VS Code extension \(Paths.name(q).components(separatedBy: "-")[2])", path: Paths.short(q),
                                      bytes: diskSize(q), why: "VS Code installed a newer one and no longer loads this."))
         }

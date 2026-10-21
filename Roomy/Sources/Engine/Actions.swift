@@ -19,6 +19,8 @@ enum Actions {
         /// Each failure as "path — reason".
         var failures: [String] = []
         var failedPaths: [String] = []
+        /// Listed but already gone when the clean started (an earlier clean or the app removed it): done, not failed.
+        var alreadyGone: [String] = []
         /// Each removal as "path — size", so History can show exactly what went.
         var done: [String] = []
         var simulated: Bool
@@ -75,6 +77,10 @@ enum Actions {
                 continue
             }
             let p = Paths.expand(t.path)
+            // Checked first: a list can be older than the disk, and a missing item is nothing to remove, not a failure.
+            guard FileManager.default.fileExists(atPath: p) || (try? FileManager.default.destinationOfSymbolicLink(atPath: p)) != nil else {
+                rep.alreadyGone.append(t.path); continue
+            }
             guard !isOffLimits(p) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
             // Roomy's own rules check again now: the app may have opened, or an update started, since the scan.
             if let why = await RoomyRules.heldNow(p) { rep.fail(t.path, why); continue }

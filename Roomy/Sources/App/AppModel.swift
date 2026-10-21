@@ -135,7 +135,44 @@ final class AppModel {
     var scanIsStale: Bool { snap.scannedAt.map { Date().timeIntervalSince($0) > 3600 } ?? false }
     /// A scan was asked for but is waiting on the access step.
     var accessPrompted = false
-    func refreshAccess() { guard !Demo.on else { return }; let g = FullDiskAccess.granted; if g != hasFullDiskAccess { hasFullDiskAccess = g } }
+    func refreshAccess() {
+        guard !Demo.on else { return }
+        let g = FullDiskAccess.granted; if g != hasFullDiskAccess { hasFullDiskAccess = g }
+        pruneMissing()
+    }
+
+    /// Drops every listed item whose file is gone, whatever removed it: another screen's clean, Mole, the app itself or
+    /// you in Finder. Runs after each clean and whenever Roomy comes to the front, so no list offers what isn't there.
+    func pruneMissing() {
+        guard !Demo.on else { return }
+        let fm = FileManager.default
+        func gone(_ path: String) -> Bool {
+            guard path.hasPrefix("/") || path.hasPrefix("~") else { return false }   // docker:…, mole:… aren't files
+            let p = Paths.expand(path)
+            return !fm.fileExists(atPath: p) && (try? fm.destinationOfSymbolicLink(atPath: p)) == nil
+        }
+        func count(_ x: Snapshot) -> Int {
+            x.categories.reduce(0) { $0 + $1.items.count } + x.aiCare.clear.count + x.aiCare.held.count + x.aiCare.review.count
+                + x.aiCare.worktrees.count + x.aiCare.cliTools.count + x.aiCare.chats.reduce(0) { $0 + $1.files.count }
+                + x.leftovers.count + x.largeFiles.count + x.installers.count + x.artifacts.count
+        }
+        var s = snap
+        for i in s.categories.indices { s.categories[i].items.removeAll { gone($0.path) } }
+        s.aiCare.clear.removeAll { gone($0.path) }
+        s.aiCare.held.removeAll { gone($0.path) }
+        s.aiCare.review.removeAll { gone($0.path) }
+        s.aiCare.worktrees.removeAll { gone($0.path) }
+        s.aiCare.cliTools.removeAll { gone($0.path) }
+        for i in s.aiCare.chats.indices { s.aiCare.chats[i].files.removeAll { gone($0.path) } }
+        s.aiCare.chats.removeAll { $0.files.isEmpty }
+        s.leftovers.removeAll { gone($0.path) }
+        s.largeFiles.removeAll { gone($0.path) }
+        s.installers.removeAll { gone($0.path) }
+        s.artifacts.removeAll { gone($0.path) }
+        guard count(s) != count(snap) else { return }
+        withAnimation(.smooth) { snap = s }
+        save()
+    }
 
     var theme: Theme { Theme.all.first { $0.id == themeID } ?? Theme.all[0] }
 
@@ -572,6 +609,8 @@ final class AppModel {
         snap.history.insert(entry, at: 0)
         lastResult = entry
         save()
+        // Mole's clean can take things other screens list (an old extension, a cache AI Cleanup shows too).
+        pruneMissing()
         let fails = rep.failures.isEmpty ? "" : " \(rep.failures.count) couldn't be removed; see History."
         flash("Freed \(Fmt.bytes(freed))" + (trashed > 0 ? ", and moved \(Fmt.bytes(trashed)) to the Trash." : ".") + fails)
         return rep
@@ -637,8 +676,14 @@ final class AppModel {
         } }
         if !rep.simulated { snap.disk = ExtrasEngine.disk() }
         save()
+        if !rep.simulated { pruneMissing() }
+        let already = rep.alreadyGone.isEmpty ? "" : " \(rep.alreadyGone.count) \(rep.alreadyGone.count == 1 ? "was" : "were") already removed by an earlier clean."
+        if !rep.simulated, rep.count == 0, rep.failures.isEmpty, !rep.alreadyGone.isEmpty {
+            flash("Nothing to remove: \(rep.alreadyGone.count == 1 ? "it was" : "they were") already removed by an earlier clean.")
+            return rep
+        }
         flash(rep.simulated ? "Safe mode: nothing was removed. It would have freed \(Fmt.bytes(rep.removed))."
-                            : rep.failures.isEmpty ? "Moved \(Fmt.bytes(rep.removed)) to the Trash. Empty the Trash to free the space." : "Moved \(Fmt.bytes(rep.removed)) to the Trash. \(rep.failures.count) item\(rep.failures.count == 1 ? "" : "s") couldn't be removed; see History.")
+                            : rep.failures.isEmpty ? "Moved \(Fmt.bytes(rep.removed)) to the Trash." + already + " Empty the Trash to free the space." : "Moved \(Fmt.bytes(rep.removed)) to the Trash." + already + " \(rep.failures.count) item\(rep.failures.count == 1 ? "" : "s") couldn't be removed; see History.")
         return rep
     }
 
