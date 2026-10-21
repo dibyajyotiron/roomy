@@ -450,6 +450,42 @@ final class ProcessFeed: @unchecked Sendable {
 
 // MARK: - Battery
 
+/// What the battery has done since it was last full, read from macOS's power log (`pmset -g log`), which records the
+/// charge every time the Mac switches between battery and power. It works for charges from before Roomy was open.
+struct SinceFullCharge: Sendable, Equatable {
+    var at: Date
+    /// Percentage points used on battery since then, across any partial charges in between.
+    var used: Int
+    /// Time spent on battery since then.
+    var onBattery: TimeInterval
+
+    static func read(now percent: Int, onBattery nowOnBattery: Bool) async -> SinceFullCharge? {
+        let r = await Shell.run("/bin/sh", ["-c", "/usr/bin/pmset -g log | /usr/bin/grep 'Using '"], timeout: 30)
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
+        var events: [(Date, Bool, Int)] = []
+        for line in r.output.split(separator: "\n") {
+            let s = String(line)
+            guard s.count > 25, let d = f.date(from: String(s.prefix(25))),
+                  let m = s.firstMatch(#"Using (AC|Batt) ?\(Charge: ?(\d+)"#), let kind = m[1], let c = m[2].flatMap({ Int($0) }) else { continue }
+            if let last = events.last, last.1 == (kind == "Batt"), last.2 == c { continue }
+            events.append((d, kind == "Batt", c))
+        }
+        guard let i = events.lastIndex(where: { $0.2 >= 100 }) else { return nil }
+        let since = Array(events[i...])
+        var used = 0, battery: TimeInterval = 0
+        for (a, b) in zip(since, since.dropFirst()) {
+            if a.1 { used += max(0, a.2 - b.2); battery += b.0.timeIntervalSince(a.0) }
+        }
+        if let last = since.last, nowOnBattery, last.1 {
+            used += max(0, last.2 - percent)
+            battery += Date().timeIntervalSince(last.0)
+        }
+        return SinceFullCharge(at: since[0].0, used: used, onBattery: battery)
+    }
+}
+
 struct BatteryReading: Sendable {
     var present = false
     var percent = 0
@@ -458,6 +494,8 @@ struct BatteryReading: Sendable {
     var minutesLeft: Int?
     var cycles: Int?
     var health: String?
+    /// How much charge the battery holds now against when it was new: what System Settings calls Maximum Capacity.
+    var healthPercent: Int?
 
     static func read() -> BatteryReading {
         var b = BatteryReading()
@@ -477,6 +515,11 @@ struct BatteryReading: Sendable {
         let s = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         if s != 0 {
             b.cycles = (IORegistryEntryCreateCFProperty(s, "CycleCount" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber)?.intValue
+            // NominalChargeCapacity ÷ DesignCapacity, the same figure System Settings shows.
+            if let data = IORegistryEntryCreateCFProperty(s, "BatteryData" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any],
+               let nominal = (data["NominalChargeCapacity"] as? NSNumber)?.doubleValue, let design = (data["DesignCapacity"] as? NSNumber)?.doubleValue, design > 0 {
+                b.healthPercent = min(100, Int((nominal / design * 100).rounded()))
+            }
             IOObjectRelease(s)
         }
         return b

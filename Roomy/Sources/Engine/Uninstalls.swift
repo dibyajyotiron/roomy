@@ -43,6 +43,44 @@ enum LeftoverFinder {
         return out
     }
 
+    /// macOS's hidden per-user cache and temp folders (/private/var/folders/…/C and …/T), where apps and their helpers
+    /// keep caches that Finder never shows.
+    static let darwinDirs: [String] = [_CS_DARWIN_USER_CACHE_DIR, _CS_DARWIN_USER_TEMP_DIR].compactMap { name in
+        let n = confstr(name, nil, 0)
+        guard n > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: n)
+        confstr(name, &buf, n)
+        let p = (String(cString: buf) as NSString).resolvingSymlinksInPath
+        return p.hasSuffix("/") ? String(p.dropLast()) : p
+    }
+
+    /// Places named for the app's bundle ID or one of its helpers' (`<id>.helper`, `<id>.ShipIt`…), the way Mole
+    /// finds them: Library folders, the hidden per-user caches, and the app's recent-documents list.
+    static func related(_ app: App) -> [String] {
+        let id = app.id.lowercased()
+        guard app.id.contains(regex: #"^[A-Za-z0-9-]+(\.[A-Za-z0-9_-]+)+$"#), id.split(separator: ".").count >= 2 else { return [] }
+        let L = HOME + "/Library/"
+        let dirs = ["Caches", "Logs", "HTTPStorages", "WebKit", "Saved Application State", "Preferences", "Containers",
+                    "Application Scripts", "Cookies", "Application Support"].map { L + $0 } + darwinDirs
+        var out: [String] = []
+        for d in dirs {
+            for c in Paths.children(d) {
+                let stem = stem(Paths.name(c))
+                if stem == id || stem.hasPrefix(id + ".") { out.append(c) }
+            }
+        }
+        let recent = L + "Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/"
+        out += Paths.children(recent).filter { stem(Paths.name($0)) == id }
+        return out
+    }
+
+    /// A Library entry's name without the endings macOS adds: "io.app.helper.plist" → "io.app.helper".
+    static func stem(_ name: String) -> String {
+        var n = name.lowercased()
+        for ext in [".plist", ".savedstate", ".binarycookies", ".sfl4", ".sfl3", ".sfl2"] where n.hasSuffix(ext) { n.removeLast(ext.count) }
+        return n
+    }
+
     /// The candidates that exist, with their real spelling (APFS ignores case, so ~/.config/OpenCode finds opencode).
     static func existing(_ app: App) -> [String] {
         var seen = Set<String>(), out: [String] = []
@@ -51,6 +89,7 @@ enum LeftoverFinder {
             guard let real = Paths.children(parent).first(where: { Paths.name($0).lowercased() == want }), seen.insert(real.lowercased()).inserted else { continue }
             out.append(real)
         }
+        for r in related(app) where seen.insert(r.lowercased()).inserted { out.append(r) }
         return out
     }
 
@@ -67,9 +106,18 @@ enum LeftoverFinder {
     static func leftovers(of app: App, installed: [App]) async -> [CleanItem] {
         let installedIDs = Set(installed.map { $0.id.lowercased() })
         guard !installedIDs.contains(app.id.lowercased()), installedOutsideTrash(app.id) == nil else { return [] }
+        return await items(of: app, installed: installed)
+    }
+
+    /// What's on disk under the app's name and IDs, minus anything an installed app or command still uses.
+    static func items(of app: App, installed: [App]) async -> [CleanItem] {
+        let installedIDs = Set(installed.map { $0.id.lowercased() })
         let installedNames = Set(installed.map { AppsEngine.norm($0.name) })
         let paths = existing(app).filter { p in
             let low = p.lowercased(), home = HOME.lowercased()
+            // Named for an installed app's ID (com.google.Chrome.canary when Chrome Canary is still here): that app's.
+            let st = stem(Paths.name(p))
+            if installedIDs.contains(where: { st == $0 || st.hasPrefix($0 + ".") }) { return false }
             let xdg = [".config/", ".cache/", ".local/share/", ".local/state/"].contains { low.hasPrefix(home + "/" + $0) }
             if xdg && commandInstalled(Paths.name(p).lowercased()) { return false }
             // A folder named for the app that another installed app of the same name still uses.
@@ -78,19 +126,45 @@ enum LeftoverFinder {
         }
         let sizes = await diskSizes(paths)
         return paths.compactMap { p in
-            guard let b = sizes[p], b > 0 else { return nil }
-            let dir = p.hasPrefix(HOME + "/Library/") ? String(p.dropFirst(HOME.count + 9).split(separator: "/").first ?? "") : "Home"
-            let volatile = Self.volatile.contains(dir)
+            // Empty folders count too: they're still clutter the app left (Mole lists them as well).
+            let b = sizes[p] ?? 0
+            guard Paths.exists(p) else { return nil }
+            let hidden = darwinDirs.contains { p.hasPrefix($0 + "/") }
+            let recent = p.contains("/com.apple.sharedfilelist/")
+            let dir = hidden ? "Hidden caches" : recent ? "Recent documents list"
+                : p.hasPrefix(HOME + "/Library/") ? String(p.dropFirst(HOME.count + 9).split(separator: "/").first ?? "") : "Home"
+            let volatile = hidden || recent || Self.volatile.contains(dir)
             let note = volatile ? "\(dir) · rebuilds if you install \(app.name) again"
                                 : "\(dir == "Home" ? "Settings and data" : dir) · may hold \(app.name)'s settings or data, so you choose"
             return CleanItem(path: Paths.short(p), name: "\(app.name) (uninstalled)", bytes: b, note: note, review: !volatile)
         }.sorted { $0.bytes > $1.bytes }
     }
 
-    /// Where macOS still knows an app with this ID, ignoring copies in the Trash.
+    /// Testing aid: `Roomy -RoomyLeftoverProbe <bundle id>` prints what Roomy would list if that app were uninstalled,
+    /// and whether it counts as installed now, then quits. It only reads; nothing is removed.
+    nonisolated static func probe(_ id: String) -> Never {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            defer { done.signal() }
+            let name = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).first.map { ($0.lastPathComponent as NSString).deletingPathExtension } ?? id
+            let app = App(id: id, name: name)
+            func say(_ s: String) { FileHandle.standardError.write(Data(("leftover probe: " + s + "\n").utf8)) }
+            say("\(name) (\(id)) installed now: \(installedOutsideTrash(id)?.path ?? "no")")
+            let others = installedNow().filter { $0.id.lowercased() != id.lowercased() }
+            for i in await items(of: app, installed: others) { say("\(Fmt.bytes(i.bytes))\t\(i.review ? "you choose" : "selected")\t\(i.path)\t\(i.note)") }
+        }
+        done.wait()
+        exit(0)
+    }
+
+    /// A copy of the app that's still installed: one in an Applications folder (not in the Trash). Copies an app keeps
+    /// inside its own data, like an updater's spare copy in Application Support, don't count as installed.
     static func installedOutsideTrash(_ id: String) -> URL? {
-        guard let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id), !u.path.contains("/.Trash/") else { return nil }
-        return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        let roots = ["/Applications/", HOME + "/Applications/"]
+        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).first { u in
+            let p = u.resolvingSymlinksInPath().path
+            return roots.contains { p.hasPrefix($0) } && !p.contains("/.Trash/") && FileManager.default.fileExists(atPath: p)
+        }
     }
 
     /// The apps in /Applications and ~/Applications right now, by name and bundle ID.
@@ -145,10 +219,11 @@ final class UninstallWatcher: NSObject, UNUserNotificationCenterDelegate {
     private var pending: Task<Void, Never>?
     private var onFound: (([CleanItem]) -> Void)?
     private var onOpen: (() -> Void)?
+    private var onReturned: (([LeftoverFinder.App]) -> Void)?
 
-    func start(onFound: @escaping ([CleanItem]) -> Void, onOpen: @escaping () -> Void) {
+    func start(onFound: @escaping ([CleanItem]) -> Void, onReturned: @escaping ([LeftoverFinder.App]) -> Void, onOpen: @escaping () -> Void) {
         guard sources.isEmpty, !Demo.on else { return }
-        self.onFound = onFound; self.onOpen = onOpen
+        self.onFound = onFound; self.onOpen = onOpen; self.onReturned = onReturned
         UNUserNotificationCenter.current().delegate = self
         _ = LeftoverFinder.noteInstalled(LeftoverFinder.installedNow())
         for dir in [HOME + "/.Trash", "/Applications", HOME + "/Applications"] {
@@ -170,6 +245,13 @@ final class UninstallWatcher: NSObject, UNUserNotificationCenterDelegate {
             guard !Task.isCancelled else { return }
             let now = LeftoverFinder.installedNow()
             let gone = LeftoverFinder.noteInstalled(now)
+            // Put back from the Trash (or installed again): what it left isn't left over any more.
+            let ids = Set(now.map { $0.id.lowercased() })
+            let back = LeftoverFinder.uninstalled.filter { ids.contains($0.id.lowercased()) || LeftoverFinder.installedOutsideTrash($0.id) != nil }
+            if !back.isEmpty {
+                LeftoverFinder.uninstalled.removeAll { back.contains($0) }
+                self?.onReturned?(back)
+            }
             guard !gone.isEmpty else { return }
             for app in gone {
                 let items = await LeftoverFinder.leftovers(of: app, installed: now)

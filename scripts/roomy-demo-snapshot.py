@@ -27,8 +27,11 @@ d["languageFiles"] = [i for i in d.get("languageFiles", []) if any(a in i["name"
 d["universalBinaries"] = [i for i in d.get("universalBinaries", []) if any(a in i["name"] for a in APPS)]
 d["outdated"] = [o for o in d.get("outdated", []) if o["name"] in {"codex", "orbstack", "google-chrome", "visual-studio-code"}]
 
-# Startup items: everyday helpers only
-d["launchItems"] = [l for l in d.get("launchItems", []) if re.match(r"^(com\.google\.|homebrew\.mxcl\.|com\.docker\.|com\.microsoft\.|com\.adobe\.|com\.proxyman\.)", l["name"])]
+# Startup items: everyday apps and helpers only
+d.pop("launchItems", None)
+EVERYDAY = r"(google|homebrew|docker|microsoft|visual studio|adobe|proxyman|postgres|mongo|orbstack|chatgpt|claude|cleanmymac|passwords|stocks|betterdisplay)"
+if d.get("startup"):
+    d["startup"]["items"] = [i for i in d["startup"]["items"] if re.search(EVERYDAY, i["owner"] + " " + i["name"], re.I)]
 
 # Leftovers: a realistic, generic set
 def left(path, name, b, note, review):
@@ -129,6 +132,8 @@ if d.get("lens"): d["lens"] = lens(d["lens"], 0)
 d["history"] = [{k: v for k, v in h.items() if k not in ("removed", "failures")} for h in d["history"][:4]]
 
 out = json.dumps(d).replace("/Users/" + USER, "~")
+# zsh names its completion cache after the computer ("~/.zcompdump-Someones-MacBook-Pro-5.9"): keep the version only.
+out = re.sub(r'\.zcompdump-[^"/\\]*?-(\d+\.\d+)', r'.zcompdump-Mac-\1', out)
 bad = [w.lower() for w in [USER, "/Users/" + USER] + sys.argv[3:] if w]
 found = [b for b in bad if b in out.lower()]
 if found:

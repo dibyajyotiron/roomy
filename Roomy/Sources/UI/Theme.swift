@@ -16,6 +16,7 @@ struct Theme: Identifiable, Hashable {
 
     static let all: [Theme] = [
         Theme(id: "system", name: "System", paint: hex(0xE2DFDA), accent: nil),
+        Theme(id: "area", name: "By area", paint: hex(0xE2DFDA), accent: nil),
         Theme(id: "plum", name: "Heather", paint: hex(0xE4D9E0), accent: hex(0x9B6BDF),
               light: [hex(0xF6F1FB), hex(0xE6DCF3)], dark: [hex(0x2A1C40), hex(0x120B1D)]),
         Theme(id: "emerald", name: "Sage", paint: hex(0xD9E2D6), accent: hex(0x3E9E6A),
@@ -32,6 +33,8 @@ struct Theme: Identifiable, Hashable {
 
     /// The accent of the chosen theme, for drawing code that needs a concrete colour (charts, canvases, gradients).
     nonisolated(unsafe) static var currentAccent: Color = .accentColor
+    /// The chosen theme, for views drawn outside the model's reach (Disk Map's spheres, offscreen renders).
+    nonisolated(unsafe) static var current: Theme = all[2]
 }
 
 /// The theme's wash: a diagonal gradient with a soft glow of the accent where light would fall, under all the glass.
@@ -79,4 +82,11 @@ enum Palette {
     static let hair = Color(nsColor: .separatorColor)
     static let fill = Color(nsColor: .quaternaryLabelColor).opacity(0.5)
     static let card = Color(nsColor: .controlBackgroundColor)
+    /// Content panels on an area's ground: a veil of white that lets the hue through (brighter in light mode).
+    static let surface = Color(nsColor: NSColor(name: nil) { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.065) : NSColor(white: 1, alpha: 0.6)
+    })
+    static let surfaceLine = Color(nsColor: NSColor(name: nil) { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 1, alpha: 0.85)
+    })
 }

@@ -51,7 +51,15 @@ enum Actions {
         return nil
     }
 
-    static func perform(_ targets: [Target], simulate: Bool) async -> Report {
+    /// Inside an app bundle or an Applications folder: only an uninstall (or your own pick in Disk Map) may remove it.
+    /// Anything else that points there is a bug, and removing it would break or delete an app.
+    static func isAppPath(_ p: String) -> Bool {
+        let c = (p as NSString).standardizingPath
+        return c.hasSuffix(".app") || c.contains(".app/") || c.hasPrefix("/Applications/") || c.hasPrefix(HOME + "/Applications/")
+            || c.hasPrefix("/System/")
+    }
+
+    static func perform(_ targets: [Target], simulate: Bool, allowApps: Bool = false) async -> Report {
         var rep = Report(simulated: simulate)
         if simulate {
             try? await Task.sleep(for: .milliseconds(700))
@@ -60,6 +68,7 @@ enum Actions {
             return rep
         }
         for t in targets {
+            if !allowApps, t.command == nil, isAppPath(Paths.expand(t.path)) { rep.fail(t.path, "Only Uninstaller removes apps"); continue }
             if let cmd = t.command, let exe = cmd.first {
                 let r = await Shell.run(exe, Array(cmd.dropFirst()), timeout: 900, directory: t.directory)
                 if r.ok { rep.removed += t.bytes; rep.count += 1; rep.done.append("\(Paths.short(t.path)) — \(Fmt.bytes(t.bytes))") } else { rep.fail(t.path, "\(exe) didn't finish: \(r.output.trimmed.suffix(120))") }
@@ -67,6 +76,8 @@ enum Actions {
             }
             let p = Paths.expand(t.path)
             guard !isOffLimits(p) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
+            // Roomy's own rules check again now: the app may have opened, or an update started, since the scan.
+            if let why = await RoomyRules.heldNow(p) { rep.fail(t.path, why); continue }
             do {
                 try PathSafety.validate(p)
                 try safety.validateTrashTarget(p)

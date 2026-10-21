@@ -60,7 +60,7 @@ enum AppsEngine {
         // Same rules as Mole's orphan clean: leftovers in Caches, Logs and Saved Application State whose app is gone
         // (not in /Applications and unknown to macOS anywhere) and that haven't changed for 30 days start selected.
         // Data folders are listed for review only, and login items and scripts are left to Startup Items.
-        // Safe places are Mole's orphan dirs plus PureMac's volatile web storage (HTTPStorages, WebKit).
+        // Safe places are Mole's orphan dirs plus volatile web storage (HTTPStorages, WebKit), which apps rebuild.
         let safeDirs = Self.safeDirs
         // Login items are left to Startup Items, which flags broken ones.
         let neverList: Set<String> = ["LaunchAgents"]
@@ -117,7 +117,7 @@ enum AppsEngine {
         return Output(apps: apps.sorted { $0.bytes > $1.bytes }, leftovers: Array(leftovers.prefix(150)))
     }
 
-    /// Mole's and PureMac's orphan rule by place alone: only leftovers in these Library folders can ever start selected. Checked
+    /// Mole's orphan rule by place alone: only leftovers in these Library folders can ever start selected. Checked
     /// again whenever results load, so a list saved by an older version can't pre-select anything else.
     static func mayPreselect(_ path: String) -> Bool {
         safeDirs.contains { Paths.short(path).hasPrefix("~/Library/\($0)/") }

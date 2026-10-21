@@ -9,6 +9,10 @@ import Foundation
 /// launch restores it.
 enum MoleWhitelist {
     static let file = Mole.config + "/whitelist"
+
+    /// Never cleaned by Checkup, whatever the keep list says. Mole empties the Trash unless ~/.Trash is on the keep
+    /// list (there is no environment switch for it in Mole 1.61), and the Trash is your undo.
+    static let alwaysKept = [HOME + "/.Trash"]
     private static let backup = Paths.support.appendingPathComponent("mole-whitelist.backup").path
     private static let absentMark = "ROOMY-NO-WHITELIST-FILE"
 
@@ -50,6 +54,15 @@ enum MoleWhitelist {
         try? text.write(toFile: file, atomically: true, encoding: .utf8)
         defer { restore() }
         return await body()
+    }
+
+    /// Puts back the maintenance keep list if an earlier Roomy build left its temporary copy (it no longer changes it).
+    static func restoreOptimize() {
+        let file = Mole.config + "/whitelist_optimize", backup = Paths.support.appendingPathComponent("mole-whitelist-optimize.backup").path
+        guard let saved = FileManager.default.contents(atPath: backup) else { return }
+        if saved == Data(absentMark.utf8) { try? FileManager.default.removeItem(atPath: file) }
+        else { try? saved.write(to: URL(fileURLWithPath: file), options: .atomic) }
+        try? FileManager.default.removeItem(atPath: backup)
     }
 
     /// Puts the keep list back as it was before a clean. Also runs at launch, in case Roomy quit mid-clean.

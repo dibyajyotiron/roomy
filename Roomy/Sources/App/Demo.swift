@@ -1,11 +1,13 @@
 import Foundation
 
-/// Demo mode, for README screenshots: `ROOMY_DEMO=<sanitised snapshot.json> Roomy.app/Contents/MacOS/Roomy`.
-/// Roomy shows that snapshot as a finished scan and never scans, cleans or saves. Activity lists only everyday
+/// Demo mode: `ROOMY_DEMO=<sanitised snapshot.json> Roomy.app/Contents/MacOS/Roomy`, or the Roomy Demo app
+/// (`Roomy/build.sh --demo`), which carries its snapshot inside. Roomy opens on the untidy room and plays the whole
+/// story on that snapshot: Scan pretends to look (it reads nothing), Clean pretends to remove (it removes nothing), and
+/// nothing is saved. Activity lists only everyday
 /// processes, every process you own reads "you", and the hardware line is generic, so no screenshot carries a
 /// username, account, project or the machine's details.
 enum Demo {
-    static let snapshot = ProcessInfo.processInfo.environment["ROOMY_DEMO"]
+    static let snapshot = ProcessInfo.processInfo.environment["ROOMY_DEMO"] ?? Bundle.main.path(forResource: "demo-snapshot", ofType: "json")
     static var on: Bool { snapshot != nil }
 
     static let hardware = "Apple silicon · macOS 26"

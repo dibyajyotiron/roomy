@@ -2,7 +2,9 @@
 # Builds Roomy.app with swiftc: MoleCore and Pow as modules, then the app, bundle, icon and an ad-hoc signature.
 # Uses Xcode's toolchain when it's installed; without Xcode the Command Line Tools work too, with Pow
 # patched in the build folder only (the CLT have no SwiftUI macro plugin).
-# Usage: Roomy/build.sh [--release] [--open] [--install]
+# Usage: Roomy/build.sh [--release] [--open] [--install] [--demo]
+#   --demo     builds "Roomy Demo.app" instead: its own bundle ID, a sanitised snapshot of this Mac's last scan inside,
+#              and demo mode on, so Scan and Clean play the whole story without reading or removing anything.
 #   --install  replaces ~/Applications/Roomy.app with this build and opens it: one copy to launch from Spotlight,
 #              and the one to give Full Disk Access to.
 set -eu
@@ -10,11 +12,13 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 # Build outside the project: a synced Desktop adds Finder metadata to new files while codesign runs, which makes
 # signing fail. Roomy/build stays as a link to the real build folder, so its paths keep working.
-OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build}"
+OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
 mkdir -p "$OUT"
-# Spotlight never indexes the build folder, so the only Roomy it lists is the installed one.
+# Keep generated files out of Spotlight's file index. Launch Services has a
+# separate app registry, so also unregister the build after signing/launching.
 touch "$OUT/.metadata_never_index"
-if [ ! -L "$ROOT/Roomy/build" ]; then rm -rf "$ROOT/Roomy/build"; ln -s "$OUT" "$ROOT/Roomy/build"; fi
+if [ ! -L "$ROOT/Roomy/build" ]; then rm -rf "$ROOT/Roomy/build"; fi
+ln -sfn "$OUT" "$ROOT/Roomy/build"
 OPT="-Onone -g"
 VERSION=${ROOMY_VERSION:-$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.0.0)}
 # The build number Sparkle compares comes from the version (0.1.0 → 100, 1.2.3 → 10203), so it only ever goes up,
@@ -29,7 +33,10 @@ FEED_URL=${ROOMY_FEED_URL:-https://github.com/dibyajyotiron/roomy/releases/lates
 ED_KEY=${ROOMY_ED_KEY:-$(cat "$ROOT/Roomy/Resources/sparkle-public-ed-key.txt" 2>/dev/null || true)}
 OPEN=0
 INSTALL=0
-for a in "$@"; do case "$a" in --release) OPT="-O" ;; --open) OPEN=1 ;; --install) INSTALL=1 ;; esac; done
+DEMO=0
+for a in "$@"; do case "$a" in --release) OPT="-O" ;; --open) OPEN=1 ;; --install) INSTALL=1 ;; --demo) DEMO=1 ;; esac; done
+APP_NAME=Roomy
+if [ "$DEMO" = 1 ]; then APP_NAME="Roomy Demo"; BUNDLE_ID=app.roomy.demo; INSTALL=0; fi
 if [ -d /Applications/Xcode.app ]; then export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer; fi
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 TARGET=arm64-apple-macos26.0
@@ -54,7 +61,7 @@ fi
   -o "$MODS/libPow.a" $(find . -name "*.swift"))
 
 echo "› Roomy"
-APP="$OUT/Roomy.app"
+APP="$OUT/$APP_NAME.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 $SWIFTC $OPT -parse-as-library -module-name Roomy -I "$MODS" -L "$MODS" -lMoleCore -lPow \
   -F "$ROOT/Vendor/Sparkle" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
@@ -72,8 +79,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Roomy</string>
-  <key>CFBundleDisplayName</key><string>Roomy</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>Roomy</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -83,7 +90,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>GPL-3.0. Built on PureMac (MIT) and Mole (GPL-3.0).</string>
+  <key>NSHumanReadableCopyright</key><string>GPL-3.0. Cleans with Mole (GPL-3.0).</string>
   <key>SUFeedURL</key><string>$FEED_URL</string>
   <key>SUPublicEDKey</key><string>$ED_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
@@ -127,6 +134,11 @@ for set in Vendor/Pow/Sources/Pow/Assets.xcassets/*.imageset; do
   img=$(ls -S "$set"/*.png 2>/dev/null | head -1 || true)
   [ -n "$img" ] && cp "$img" "$APP/Contents/Resources/$name.png"
 done
+if [ "$DEMO" = 1 ]; then
+  # Only generic names survive (scripts/roomy-demo-snapshot.py refuses to write if your username remains).
+  SNAP="${ROOMY_DEMO_SOURCE:-$HOME/Library/Application Support/Roomy/snapshot.json}"
+  python3 -I scripts/roomy-demo-snapshot.py "$SNAP" "$APP/Contents/Resources/demo-snapshot.json"
+fi
 xattr -cr "$APP"
 # macOS remembers permissions like Full Disk Access by the app's signing requirement. Plain ad-hoc signing ties that to
 # this exact build, so every rebuild would lose the grant. Use an Apple Development identity when there is one;
@@ -148,15 +160,21 @@ else
   codesign --force --sign - -r="designated => identifier \"$BUNDLE_ID\"" "$APP" >/dev/null 2>&1
 fi
 codesign --verify --deep --strict "$APP"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+unregister_build() {
+  "$LSREG" -u "$APP" >/dev/null 2>&1 || true
+}
+unregister_build
 echo "✓ $APP"
 if [ "$INSTALL" = 1 ]; then
   DEST="$HOME/Applications/Roomy.app"
   pkill -x Roomy 2>/dev/null || true
   mkdir -p "$HOME/Applications"
   rm -rf "$DEST" && ditto "$APP" "$DEST"
-  LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-  "$LSREG" -u "$APP" >/dev/null 2>&1 || true   # only the installed copy shows up in Spotlight and Launchpad
   "$LSREG" -f "$DEST" >/dev/null 2>&1 || true
   echo "✓ installed $DEST"
   open "$DEST"
-elif [ "$OPEN" = 1 ]; then open "$APP"; fi
+elif [ "$OPEN" = 1 ]; then
+  open "$APP"
+  unregister_build
+fi

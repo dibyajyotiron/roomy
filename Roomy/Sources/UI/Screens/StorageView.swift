@@ -257,7 +257,7 @@ struct StorageView: View {
                     if model.hasFullDiskAccess {
                         Notice(symbol: "checkmark.shield", tint: Palette.ok,
                                text: "Full Disk Access is on now. Scan again to measure \(s.name).",
-                               action: model.canScan ? ("Scan Again", { model.scanAll() }) : nil)
+                               action: model.canRescan(.storage) ? ("Scan Again", { model.rescan(.storage) }) : nil)
                     } else {
                         Notice(symbol: "lock.shield", tint: Palette.warn,
                                text: "macOS keeps \(s.name) private. Apps can't read its size until you allow Full Disk Access. Roomy only reads sizes; it never opens your messages or photos.",
@@ -267,7 +267,7 @@ struct StorageView: View {
                 if s.key == "sysdata" && r.measuredWithAccess != true && model.hasFullDiskAccess {
                     Notice(symbol: "checkmark.shield", tint: Palette.ok,
                            text: "Full Disk Access is on now. Scan again and most of what's \"not visible yet\" gets measured and named.",
-                           action: model.canScan ? ("Scan Again", { model.scanAll() }) : nil)
+                           action: model.canRescan(.storage) ? ("Scan Again", { model.rescan(.storage) }) : nil)
                 }
                 if !s.children.isEmpty {
                     ListCard {
@@ -322,7 +322,7 @@ struct StorageView: View {
         case .evict: Button("Remove download") { model.flash("Use Finder: right-click the folder › Remove Download. The files stay in iCloud.") }.buttonStyle(.bordered)
         case .diskMap: Button("Show in Disk Map") { model.route = .lens }.buttonStyle(.bordered)
         case .grantAccess:
-            if model.hasFullDiskAccess { Button("Scan Again") { model.scanAll() }.buttonStyle(.bordered).disabled(!model.canScan) }
+            if model.hasFullDiskAccess { Button("Scan Again") { model.rescan(.storage) }.buttonStyle(.bordered).disabled(!model.canRescan(.storage)) }
             else { Button("Grant Full Disk Access", action: openFDA).buttonStyle(.glassProminent) }
         case .openApp(let n): Button("Open \(n)") { reveal(c.path) }.buttonStyle(.bordered)
         }

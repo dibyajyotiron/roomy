@@ -106,17 +106,30 @@ private struct Tile<Picture: View>: View {
     var value: String
     var unit: String
     var caption: String
+    /// A small action in the tile's corner (Free Up), with what it last did.
+    var action: (title: String, busy: Bool, run: () -> Void)? = nil
     @ViewBuilder var picture: () -> Picture
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 5) {
                 Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.accent).frame(width: 14)
-                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
-                if let tag { Tag(text: tag, color: tagTint) }
+                if let action {
+                    Button(action: action.run) {
+                        HStack(spacing: 4) {
+                            if action.busy { ProgressView().controlSize(.mini) }
+                            Text(action.title).font(.system(size: 11, weight: .semibold)).fixedSize()
+                        }
+                        .padding(.horizontal, 9).frame(height: 22)
+                        .background(Capsule().fill(Palette.accent.opacity(0.16)))
+                        .foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain).disabled(action.busy)
+                } else if let tag { Tag(text: tag, color: tagTint) }
             }
-            .frame(height: 20)
+            .frame(height: 22)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value).font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit().contentTransition(.numericText())
                 Text(unit).font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(.secondary)
@@ -179,26 +192,45 @@ private struct GPUTile: View {
 
 private struct MemoryTile: View {
     @Environment(AppModel.self) var model
+    @State private var freeing = false
+    @State private var freed: Int64?
     var body: some View {
         let m = model.monitor
         let p = m.pressure
         let share = Double(m.memUsed) / Double(max(1, m.memTotal))
+        let caption = freed.map { $0 > 0 ? "Freed \(Fmt.bytes($0)) just now" : model.safeMode ? "Safe mode: nothing was freed" : "Nothing more to free" }
+            ?? (Demo.on ? "in use" : "\(Fmt.bytes(m.memUsed)) of \(Fmt.bytes(m.memTotal)) · \(["normal", "rising", "high"][p.level])")
         Tile(symbol: "memorychip", title: "Memory", tag: ["Normal", "Rising", "High"][p.level], tagTint: [Palette.ok, Palette.warn, Palette.bad][p.level],
-             value: "\(Int((share * 100).rounded()))", unit: "%", caption: Demo.on ? "in use" : "\(Fmt.bytes(m.memUsed)) of \(Fmt.bytes(m.memTotal))") {
+             value: "\(Int((share * 100).rounded()))", unit: "%", caption: caption,
+             action: (freeing ? "Freeing" : "Free Up", freeing, {
+                 // macOS's purge, which asks for your password; the result is measured, never estimated.
+                 Task { freeing = true; freed = await m.freeMemory(simulate: model.safeMode); freeing = false }
+             })) {
             Spark(values: m.history.map { Double($0.memory.used) / Double(max(1, $0.memory.total)) * 100 }, max: 100, tint: Palette.accent)
         }
+        .help("Free Up releases memory apps no longer use (macOS's purge; it asks for your password) and shows what it actually freed.")
     }
 }
 
 private struct DiskTile: View {
     @Environment(AppModel.self) var model
+    @Environment(\.openWindow) var openWindow
     var body: some View {
         let d = model.snap.disk
         let used = max(0, d.total - d.free)
         let share = d.total > 0 ? Double(used) / Double(d.total) : 0
         let (v, u) = Fmt.split(d.free)
+        let ready = model.awaitingClean && !model.scanIsStale && model.checkupBytes > 0
         Tile(symbol: "internaldrive", title: "Disk", tag: d.total > 0 ? Fmt.bytes(d.total) : nil, value: v, unit: "\(u) free",
-             caption: "\(Fmt.bytes(used)) used · \(Int((share * 100).rounded()))%") {
+             caption: ready ? "\(Fmt.bytes(model.checkupBytes)) ready to clean" : "\(Fmt.bytes(used)) used · \(Int((share * 100).rounded()))%",
+             action: (ready ? "Clean" : "Free Up", model.phase == .scanning || model.isCleaning, {
+                 // Into Checkup: clean what the last scan bagged, or scan first.
+                 if ready { model.cleanRequested = true }
+                 model.route = .care
+                 NSApp.activate(ignoringOtherApps: true)
+                 openWindow(id: "main")
+                 if !ready && model.canScan { model.scanAll() }
+             })) {
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.fill)
@@ -287,6 +319,7 @@ private struct CoreColumns: View {
 
 private struct BatteryStrip: View {
     @Environment(AppModel.self) var model
+    @State private var sinceFull: SinceFullCharge?
     var body: some View {
         let b = model.monitor.battery
         let state: String = {
@@ -295,36 +328,56 @@ private struct BatteryStrip: View {
             return b.minutesLeft.map { "On battery · \(Self.time($0)) left" } ?? "On battery"
         }()
         let tint = b.percent <= 15 && !b.onAC ? Palette.bad : b.percent <= 30 && !b.onAC ? Palette.warn : Palette.ok
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 5) {
-                    Image(systemName: b.charging ? "battery.100.bolt" : "battery.100").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.accent)
-                    Text("Battery").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(b.percent)%").font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit().contentTransition(.numericText())
-                    Text(state).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 6) {
-                HStack(spacing: 4) {
-                    if let h = b.health { Tag(text: h == "Good" ? "Health good" : h) }
-                    if let c = b.cycles, !Demo.on { Tag(text: "\(c) cycles") }
-                }
-                GeometryReader { g in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Palette.fill)
-                        Capsule().fill(tint).frame(width: max(6, g.size.width * CGFloat(b.percent) / 100))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Image(systemName: b.charging ? "battery.100.bolt" : "battery.100").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.accent)
+                        Text("Battery").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("\(b.percent)%").font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit().contentTransition(.numericText())
+                        Text(state).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
-                .frame(width: 120, height: 8)
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 6) {
+                    // Health first: it's the number that matters, with the cycle count beside it.
+                    if !Demo.on, let h = b.healthPercent {
+                        Tag(text: "Health \(h)%" + (b.cycles.map { " · \($0) cycles" } ?? ""), color: h >= 80 ? Palette.ok : Palette.warn)
+                            .help("Your battery holds \(h)% of the charge it held when new (System Settings calls this Maximum Capacity). Apple suggests a service below 80%.")
+                    } else if let c = b.cycles, !Demo.on { Tag(text: "\(c) cycles") }
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Palette.fill)
+                            Capsule().fill(tint).frame(width: max(6, g.size.width * CGFloat(b.percent) / 100))
+                        }
+                    }
+                    .frame(width: 120, height: 8)
+                }
+            }
+            if let s = sinceFull, !Demo.on {
+                Text(Self.sinceText(s))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .help("Read from macOS's power log, which records the charge each time your Mac switches between battery and power.")
             }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.fill))
         .accessibilityElement(children: .combine)
+        .task(id: "\(b.onAC)\(b.percent / 5)") {
+            sinceFull = await SinceFullCharge.read(now: b.percent, onBattery: !b.onAC)
+        }
     }
+
+    /// "Since full 3 h ago: used 86% · 2 h 59 min on battery".
+    static func sinceText(_ s: SinceFullCharge) -> String {
+        let ago = Date().timeIntervalSince(s.at)
+        let when = ago < 3600 ? "\(max(1, Int(ago / 60))) min ago" : ago < 86_400 * 2 ? "\(Int(ago / 3600)) h ago" : "\(Int(ago / 86_400)) days ago"
+        if s.used == 0 { return "Full charge \(when) · not used on battery since" }
+        return "Since full \(when): used \(s.used)% · \(time(Int(s.onBattery / 60))) on battery"
+    }
+
     static func time(_ m: Int) -> String { m >= 60 ? "\(m / 60) h \(m % 60) min" : "\(m) min" }
 }
 
@@ -387,7 +440,8 @@ private struct TopApps: View {
     }
 }
 
-/// Camera and microphone (read every two seconds while the panel is open) beside Keep awake and Screen on.
+/// Camera and microphone (read every two seconds while the panel is open) beside Keep awake and Keep screen on. Each
+/// switch says plainly whether it's on and what that means.
 private struct PresenceRow: View {
     @State private var awake = KeepAwake.shared
     @State private var camera = false
@@ -395,21 +449,29 @@ private struct PresenceRow: View {
 
     var body: some View {
         let text = camera && mic ? "Both in use" : camera ? "Camera on" : mic ? "Mic on" : "Not in use"
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 dot("video", on: camera)
                 dot("mic", on: mic)
-                Text(text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text("Camera and mic: " + text.lowercased()).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
             }
             .accessibilityElement(children: .combine)
             .help(camera || mic ? "An app is using your \(camera && mic ? "camera and microphone" : camera ? "camera" : "microphone") right now." : "No app is using your camera or microphone.")
-            Spacer(minLength: 4)
-            Toggle(isOn: $awake.system) { Label("Awake", systemImage: "cup.and.saucer") }
-                .help("Keeps your Mac from sleeping while Roomy is open. Ends when you switch it off or quit Roomy.")
-            Toggle(isOn: $awake.display) { Label("Screen on", systemImage: "display") }
-                .help("Keeps the display from dimming and sleeping while Roomy is open.")
+            HStack(spacing: 8) {
+                pill(on: awake.system, off: "Keep awake", onText: "Staying awake", symbol: "cup.and.saucer") { awake.system.toggle() }
+                    .help("Stops your Mac from going to sleep while it's on. Ends when you switch it off or quit Roomy.")
+                pill(on: awake.display, off: "Keep screen on", onText: "Screen stays on", symbol: "display") { awake.display.toggle() }
+                    .help("Stops the display from dimming or sleeping while it's on. Ends when you switch it off or quit Roomy.")
+            }
+            if awake.system || awake.display {
+                Text(awake.display ? "Your screen won't dim or sleep, and your Mac stays awake, until you switch this off or quit Roomy."
+                                   : "Your Mac won't go to sleep until you switch this off or quit Roomy. The screen can still turn off.")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
+            }
         }
-        .toggleStyle(.button).controlSize(.small)
+        .animation(.snappy, value: "\(awake.system)\(awake.display)")
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.fill))
         .task {
@@ -419,6 +481,21 @@ private struct PresenceRow: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    /// Off: a quiet outline saying what it would do. On: filled with the accent, saying what it's doing.
+    func pill(on: Bool, off: String, onText: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(on ? onText : off, systemImage: on && NSImage(systemSymbolName: symbol + ".fill", accessibilityDescription: nil) != nil ? symbol + ".fill" : symbol)
+                .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                .padding(.horizontal, 9).frame(maxWidth: .infinity).frame(height: 26)
+                .contentShape(Capsule())
+                .foregroundStyle(on ? Color.white : Color.primary.opacity(0.8))
+                .background(Capsule().fill(on ? Palette.accent : Color.clear))
+                .overlay(Capsule().strokeBorder(on ? Color.clear : Color.primary.opacity(0.18), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     func dot(_ symbol: String, on: Bool) -> some View {

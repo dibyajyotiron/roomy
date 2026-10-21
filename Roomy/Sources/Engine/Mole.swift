@@ -39,8 +39,6 @@ enum Mole {
     static var env: [String: String] {
         var e = Shell.baseEnvironment
         e["MOLE_DRY_RUN"] = "1"; e["NO_COLOR"] = "1"; e["MO_NO_OPLOG"] = "1"
-        // Checkup never empties the Trash: that would permanently delete things people put there.
-        e["MOLE_SKIP_TRASH_CLEANUP"] = "1"
         return e
     }
 
@@ -65,7 +63,8 @@ enum Mole {
         var total: Int64? }
 
     static func cleanPreview(using: String? = nil) async -> CleanPreview {
-        let out = await run(["clean", "--dry-run"], timeout: 1200, using: using)
+        // The Trash is on the keep list for the preview too, so it's never counted as something Clean removes.
+        let out = await MoleWhitelist.keeping(MoleWhitelist.alwaysKept) { await run(["clean", "--dry-run"], timeout: 1200, using: using) }
         var pv = CleanPreview()
         var section: String?
         for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -167,7 +166,13 @@ enum Mole {
         var ran = false
         /// Mole's own total for the session (some removals are logged in batches without a size).
         var total: Int64?
+        /// Mole's own count of removed items, from the session's end line.
+        var reported: Int?
+        /// When the session started and ended, from Mole's log.
+        var started: Date?
+        var ended: Date?
         var freed: Int64 { total ?? removed.reduce(0) { $0 + $1.bytes } }
+        var count: Int { max(removed.count, reported ?? 0) }
     }
 
     /// Runs Mole's own user-level clean, the same pass its preview showed. Without a terminal Mole runs
@@ -181,14 +186,13 @@ enum Mole {
 
     /// Runs Mole's clean. `keeping` are paths you unticked in the review: Mole leaves them alone this time.
     static func runClean(keeping: [String] = []) async -> CleanRun {
-        await MoleWhitelist.keeping(keeping) { await runCleanNow() }
+        await MoleWhitelist.keeping(MoleWhitelist.alwaysKept + keeping) { await runCleanNow() }
     }
 
     private static func runCleanNow() async -> CleanRun {
         guard let path else { return CleanRun() }
         var e = Shell.baseEnvironment
         e["NO_COLOR"] = "1"
-        e["MOLE_SKIP_TRASH_CLEANUP"] = "1"
         let started = Date().addingTimeInterval(-2)
         let r = await Shell.run(path, ["clean"], environment: e, timeout: 1800)
         var run = readOperations(since: started)
@@ -197,26 +201,51 @@ enum Mole {
     }
 
     /// Reads the newest clean session in Mole's operations log that started at or after `since`.
+    /// Mole's operations log, both formats: Mole 1.61 tags every line with its run (`[clean run=<id>] REMOVED …`,
+    /// `clean run=<id> session started at …`); earlier versions wrote `[clean] REMOVED …`. Dry runs
+    /// (`clean-dry-run run=…`) are never read as a clean. With run IDs only that run's lines count, even if another
+    /// Mole was writing at the same time.
     static func readOperations(since: Date, log logPath: String = HOME + "/Library/Logs/mole/operations.log") -> CleanRun {
         var run = CleanRun()
         // Decoded leniently: one odd byte in a long log must not hide the whole session.
         guard let data = FileManager.default.contents(atPath: logPath) else { return run }
         let lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
         stamp.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        var runID: String?
         guard let start = lines.lastIndex(where: { l in
-            guard let m = l.firstMatch(#"clean session started at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#), let t = m[1], let d = stamp.date(from: t) else { return false }
-            return d >= since
+            guard let m = l.firstMatch(#"session started at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#), let t = m[1], let d = stamp.date(from: t), d >= since,
+                  let label = l.firstMatch(#"^#\s*=+\s*(clean(?: run=(\S+))?)\s+session started"#) else { return false }
+            runID = label[2] ?? nil
+            run.started = d
+            return true
         }) else { return run }
+        let tag = runID.map { "clean run=\($0)" } ?? "clean"
         for l in lines[(start + 1)...] {
-            if l.contains("session ended") {
+            if l.contains("\(tag) session ended") || (runID == nil && l.contains("session ended")) {
                 run.total = l.firstMatch(#",\s*([\d.]+\s*[KMGT]?B)\s*=*\s*$"#).flatMap { $0[1] }.flatMap { parseSize($0) }
+                run.reported = l.firstMatch(#",\s*(\d+) items?,"#).flatMap { $0[1] }.flatMap { Int($0) }
+                run.ended = l.firstMatch(#"session ended at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"#).flatMap { $0[1] }.flatMap { stamp.date(from: $0) }
                 break
             }
-            guard let m = l.firstMatch(#"^\[[^\]]+\] \[clean\] (REMOVED|FAILED) (.+?)(?: \(([^()]*)\))?$"#), let act = m[1], let p = m[2] else { continue }
-            if act == "REMOVED" { run.removed.append((p, parseSize(m[3] ?? "") ?? 0)) } else { run.failed.append((p, m[3] ?? "error")) }
+            guard let m = l.firstMatch(#"^\[[^\]]+\] \[([^\]]+)\] (REMOVED|FAILED) (.+?)(?: \(([^()]*)\))?$"#), m[1] == tag,
+                  let act = m[2], let p = m[3] else { continue }
+            if act == "REMOVED" { run.removed.append((p, parseSize(m[4] ?? "") ?? 0)) } else { run.failed.append((p, m[4] ?? "error")) }
         }
         return run
+    }
+
+    /// Testing aid: `Roomy -RoomyReadCleanLog "2026-10-19 12:50:00"` prints what Roomy reads for the first real clean
+    /// after that time, then quits. It only reads Mole's log.
+    static func readCleanLogTest(_ since: String) -> Never {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let file = UserDefaults.standard.string(forKey: "RoomyReadCleanLogFile") ?? HOME + "/Library/Logs/mole/operations.log"
+        let r = readOperations(since: f.date(from: since) ?? .distantPast, log: file)
+        let out = "clean log: started \(r.started.map { f.string(from: $0) } ?? "-"), ended \(r.ended.map { f.string(from: $0) } ?? "-"), "
+            + "\(r.count) items (\(r.removed.count) lines), freed \(Fmt.bytes(r.freed)), \(r.failed.count) failed\n"
+        FileHandle.standardError.write(Data(out.utf8))
+        exit(0)
     }
 
     // MARK: purge, installers, uninstall, optimize
@@ -281,7 +310,7 @@ enum Mole {
             guard !tasks.isEmpty, "→◎○✓".contains(f) else { continue }
             let text = String(s.dropFirst()).trimmed
             var state = ["→": "Would run", "◎": "Needs you", "○": "Not applicable", "✓": "Already fine"][String(f)] ?? ""
-            if f == "→", text.contains(regex: #"already|healthy|valid|clean\b|no legacy|not found|skipped"#) {
+            if f == "→", text.contains(regex: #"already|healthy|valid|clean\b|no legacy|not found|skipped|^no |^nothing|whitelisted"#) {
                 state = text.contains(regex: "skipped") ? "Skipped" : "Already fine"
             }
             let over = text.contains(regex: "memory (released|optimi)|responsiveness improved|speed up|boost")

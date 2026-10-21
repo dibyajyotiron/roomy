@@ -43,7 +43,7 @@ targets:
         CFBundleVersion: "101"
         LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.utilities
-        NSHumanReadableCopyright: "GPL-3.0. Built on PureMac (MIT) and Mole (GPL-3.0)."
+        NSHumanReadableCopyright: "GPL-3.0. Cleans with Mole (GPL-3.0)."
         SUFeedURL: https://github.com/dibyajyotiron/roomy/releases/latest/download/appcast.xml
         SUPublicEDKey: KmDoLhHTW4ettZXyEMZMFjgPk3i01x0RFYzE+unlrtg=
         SUEnableAutomaticChecks: true

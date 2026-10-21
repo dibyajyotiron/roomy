@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 VERSION=$(cat VERSION)
 DIST="$ROOT/dist"
-OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build}"
+OUT="${ROOMY_BUILD_DIR:-$HOME/Library/Caches/Roomy/build.noindex}"
 APP="$OUT/Roomy.app"
 URL_PREFIX="${ROOMY_DOWNLOAD_URL_PREFIX:-https://github.com/dibyajyotiron/roomy/releases/download/v$VERSION/}"
 
@@ -124,7 +124,7 @@ cat > "$WORK/resources/welcome.html" <<HTML
 <h2 style="margin-top:0">Roomy $VERSION</h2>
 <p>Make room on your Mac, and see exactly what goes before it goes.</p>
 <p>This installs Roomy in your Applications folder. Mole, the cleaning engine Roomy uses, comes with it, so there's nothing else to install.</p>
-<p>Roomy keeps itself up to date: when a new version is out, a download button appears in the sidebar above your disk. Click it and Roomy downloads the update and reopens updated.</p>
+<p>Roomy keeps itself up to date: when a new version is out, an Update button appears in the toolbar. Click it and Roomy downloads the update and reopens updated.</p>
 <p>Free software under the GNU General Public License v3.0.</p>
 </body></html>
 HTML

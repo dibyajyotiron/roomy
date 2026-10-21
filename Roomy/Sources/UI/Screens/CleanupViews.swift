@@ -15,13 +15,13 @@ struct ItemRow: View {
 
     var defaultIcon: AnyView {
         if path.hasPrefix("docker:"), let app = AppIconLookup.path(for: "docker") ?? AppIconLookup.path(for: "orbstack") {
-            return AnyView(FileIcon(path: app, size: 26))
+            return AnyView(FileIcon(path: app, size: 36))
         }
-        if path.hasPrefix("mole:"), let app = AppIconLookup.path(for: title) { return AnyView(FileIcon(path: app, size: 26)) }
+        if path.hasPrefix("mole:"), let app = AppIconLookup.path(for: title) { return AnyView(FileIcon(path: app, size: 36)) }
         if path.hasPrefix("docker:") || path.hasPrefix("mole:") {
-            return AnyView(Image(systemName: "gearshape.2.fill").font(.system(size: 16)).foregroundStyle(Palette.ink3))
+            return AnyView(Image(systemName: "gearshape.2.fill").font(.system(size: 20)).foregroundStyle(Palette.ink3))
         }
-        return AnyView(FileIcon(path: path, size: 26))
+        return AnyView(FileIcon(path: path, size: 36))
     }
 
     var body: some View {
@@ -35,12 +35,12 @@ struct ItemRow: View {
                     case .managed: Image(systemName: "house").foregroundStyle(Palette.ink3)
                     }
                 }
-                .frame(width: 20)
+                .frame(width: 22)
                 (icon ?? defaultIcon)
-                    .frame(width: 28, height: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(Palette.ink3).lineLimit(2)
+                    .frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 13.5, weight: .semibold)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(Palette.ink3).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 10)
                 switch mode {
@@ -48,9 +48,9 @@ struct ItemRow: View {
                 case .locked(let why), .managed(let why): Text(why).font(.system(size: 11)).foregroundStyle(Palette.ink3).lineLimit(2).frame(maxWidth: 300, alignment: .trailing)
                 case .select: EmptyView()
                 }
-                Text(Fmt.bytes(bytes)).font(.system(size: 13, weight: .semibold)).monospacedDigit().frame(minWidth: 72, alignment: .trailing)
+                Text(Fmt.bytes(bytes)).font(.system(size: 13.5, weight: .semibold, design: .rounded)).monospacedDigit().frame(minWidth: 72, alignment: .trailing)
             }
-            .padding(.horizontal, 14).padding(.vertical, 9)
+            .padding(.horizontal, 12).padding(.vertical, 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -107,8 +107,11 @@ struct CategoryScreen: View {
                         Task { await model.clean(route.title, targets: selected.map { Actions.Target(path: $0.path, bytes: $0.bytes, command: $0.command) }) }
                     }
                 } else if moleBytes > 0 {
-                    FooterBar(bytes: moleBytes, count: cats.flatMap(\.items).count, label: "Open Checkup",
-                              note: "Checkup cleans these together and re-checks each one at the moment of removal") { model.route = .care }
+                    FooterBar(bytes: moleBytes, count: cats.flatMap(\.items).count, label: "Clean",
+                              note: "Cleaned together with everything in Checkup's bag, each re-checked at the moment of removal") {
+                        model.cleanRequested = true
+                        model.route = .care
+                    }
                 }
             }
         }
@@ -324,9 +327,12 @@ struct SlimmingView: View {
             Picker("", selection: $tab) { Text("Language files").tag(0); Text("Universal binaries").tag(1) }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 300).padding(.top, 12)
             if tab == 0 {
-                SimpleListScreen(title: "App Slimming", subtitle: "Translations for languages you don't use, inside app bundles. Apple apps and App Store apps are never touched.",
-                                 items: model.snap.languageFiles, action: "Remove", note: "The app re-downloads them when it updates",
-                                 empty: ("Nothing to slim", "No app ships languages you don't use."))
+                // Listed for reference only. Removing anything inside an app breaks its code signature, and macOS may then
+                // refuse to open it; the app also puts the files back with its next update.
+                SimpleListScreen(title: "App Slimming", subtitle: "Translations for languages you don't use, inside apps. Removing them breaks an app's signature, so Roomy only lists them.",
+                                 items: model.snap.languageFiles.map { var x = $0; x.held = "Review only"; return x }, action: "Remove", note: "Changes the app's code signature",
+                                 empty: ("Nothing to slim", "No app ships languages you don't use."), caption: "listed for reference")
+                    .disabled(true)
             } else {
                 SimpleListScreen(title: "App Slimming", subtitle: "Intel code this Mac never runs. Removing it breaks the app's signature, so it's listed for reference only.",
                                  items: model.snap.universalBinaries.map { var x = $0; x.held = "Review only"; return x }, action: "Remove", note: "Changes the app's code signature",

@@ -5,8 +5,10 @@ import AppKit
 /// Checkup's room, built from scanned furniture and props (CC0, Poly Haven) and lit by a real interior HDRI.
 ///
 /// The story: the room starts untidy, with paper, notepads, postcards, cans, boxes and bottles standing for what a
-/// scan can find. As each part of the scan reports, its clutter is swept into a trash bag beside the bin, and the bag
-/// visibly fills. Clean drops the tied bags into the bin, one at a time. Your own things (the books) stay put.
+/// scan can find, and your books strewn over the sofa, the table and the floor. As each part of the scan reports, its
+/// finds light up and are tossed one by one into a single bag by the bin, which starts empty and is full when the scan
+/// ends; your books fly back onto the shelf (Roomy never removes your files on its own). Clean drops the bag into the
+/// bin, and a fresh, empty bag takes its place.
 ///
 /// Cost: shared geometry and materials, 512 px textures on small props, no physics or particles, and the view
 /// renders only while something moves.
@@ -31,7 +33,7 @@ final class RoomScene {
     /// Scene units per metre (the room was laid out before the scanned assets arrived).
     private let U: CGFloat = 1.9
     /// Clutter is drawn a little larger than life so it still reads from across the room.
-    private let CL: CGFloat = 1.3
+    private let CL: CGFloat = 1.55
 
     private let clutterRoot = SCNNode()
     private let sun = SCNNode(), fill = SCNNode(), ambient = SCNNode(), lamp = SCNNode(), window = SCNNode()
@@ -40,7 +42,7 @@ final class RoomScene {
     private var dark: Bool?
     private var paintColor: NSColor?
 
-    private enum Place { case room, bagged }
+    private enum Place { case room, bagged, shelved }
     private final class Piece {
         let node: SCNNode
         let key: String
@@ -48,34 +50,47 @@ final class RoomScene {
         let removable: Bool
         var slot: Int
         var place: Place = .room
+        /// A book's thickness, height and depth; nil for clutter.
+        var book: SCNVector3?
+        var shelf: Int?
+        /// A cardboard box: folded flat on its way into the bag.
+        var folds = false
         init(node: SCNNode, key: String, step: String, removable: Bool, slot: Int) {
             self.node = node; self.key = key; self.step = step; self.removable = removable; self.slot = slot
         }
     }
     private var pieces: [Piece] = []
     private var processed: Set<String> = []
-    private var bags: [SCNNode] = []
-    private let bagCapacity = 5
+    /// Seconds between one find and the next going into the bag: unhurried for a few, brisker for many.
+    private func toss(_ n: Int) -> TimeInterval { min(0.2, 2.6 / Double(max(1, n))) }
 
     // MARK: layout
 
     private let bin = SCNVector3(3.9, 0, -3.55)
-    /// Bags gather beside the bin.
-    private let bagSpots: [SCNVector3] = [SCNVector3(2.85, 0, -3.15), SCNVector3(2.25, 0, -2.45), SCNVector3(3.2, 0, -2.3)]
+    /// The one bag stands beside the bin.
+    private let bagSpot = SCNVector3(2.75, 0, -3.0)
 
-    /// Where clutter lies in an untidy room: around the rug, on the coffee table and sofa, under the window.
+    /// Where clutter lies in an untidy room: all over the rug and floor, on the coffee table and sofa, under the window.
     private let slots: [(SCNVector3, CGFloat)] = [
         (SCNVector3(-2.0, 0, -1.4), 0.4), (SCNVector3(0.3, 0.75, -2.65), 1.2), (SCNVector3(-0.4, 0, -0.9), 2.1),
         (SCNVector3(-2.0, 0.82, -5.0), 0.3), (SCNVector3(-3.9, 0, -2.6), 1.9), (SCNVector3(1.6, 0, -1.2), 2.8),
         (SCNVector3(-1.1, 0.75, -3.0), 0.9), (SCNVector3(1.9, 0, -3.9), 0.2), (SCNVector3(-4.7, 0, -0.6), 2.4),
         (SCNVector3(-0.2, 0.82, -5.1), 1.4), (SCNVector3(-3.0, 0, -4.1), 0.7), (SCNVector3(0.4, 0, 0.2), 1.1),
         (SCNVector3(-1.2, 0, -0.2), 2.6), (SCNVector3(1.4, 0, -2.3), 0.5), (SCNVector3(-5.0, 0, -3.8), 1.6),
-        (SCNVector3(0.9, 0, -4.4), 2.2),
+        (SCNVector3(0.9, 0, -4.4), 2.2), (SCNVector3(2.4, 0, -0.9), 1.0), (SCNVector3(-1.15, 0.82, -4.85), 2.0),
+        (SCNVector3(-2.7, 0, -0.2), 0.6), (SCNVector3(0.9, 0, -0.6), 1.7), (SCNVector3(-3.5, 0, -3.3), 2.9),
+        (SCNVector3(-0.15, 0.75, -3.1), 0.4), (SCNVector3(-4.5, 0, -1.6), 1.3), (SCNVector3(2.2, 0, 0.6), 2.3),
+        (SCNVector3(0.0, 0.02, -1.8), 0.8), (SCNVector3(1.7, 0, 0.0), 2.5), (SCNVector3(-3.9, 0, 0.4), 1.2),
+        (SCNVector3(-1.0, 0.75, -2.4), 2.7), (SCNVector3(3.3, 0, -1.6), 0.3), (SCNVector3(-5.3, 0, -1.0), 1.8),
     ]
-    /// Your things: books on the coffee table, by the sofa and on the floor.
+    /// Your things: books dropped on the coffee table, the sofa and the floor.
     private let ownSlots: [(SCNVector3, CGFloat)] = [
-        (SCNVector3(-0.6, 0.75, -2.5), 0.25), (SCNVector3(-3.1, 0, -4.6), 0.1), (SCNVector3(2.3, 0, -5.4), 1.3),
+        (SCNVector3(-0.65, 0.75, -2.45), 0.25), (SCNVector3(-2.45, 0.82, -4.95), 1.1), (SCNVector3(0.35, 0.82, -4.8), 2.4),
+        (SCNVector3(-1.9, 0.02, -2.0), 0.7), (SCNVector3(1.15, 0, -3.3), 1.9), (SCNVector3(-5.0, 0, -2.2), 0.4),
+        (SCNVector3(3.1, 0, -4.75), 2.8), (SCNVector3(-0.9, 0, -0.55), 1.5),
     ]
+    /// Gaps on the bookcase where the strewn books belong: the left edge of a slot and its board, filled in order.
+    private var shelfSpots: [SCNVector3] = []
 
     private init() {
         scene.background.contents = NSColor(white: 0.1, alpha: 1)
@@ -84,6 +99,7 @@ final class RoomScene {
         buildLights()
         buildCamera()
         scene.rootNode.addChildNode(clutterRoot)
+        buildBag()
     }
 
     // MARK: assets
@@ -233,11 +249,15 @@ final class RoomScene {
         let room = SCNNode()
 
         // Oak floor, plaster walls (tinted with the room colour), wool rug: real scanned surfaces.
-        let floor = SCNPlane(width: 60, height: 60)
+        // The floor stops at the walls, so the window looks out on the garden, not on more floor.
+        let floor = SCNPlane(width: 40, height: 60)
         floor.materials = [surface("wood_floor", repeat: 16)]
+        floor.materials[0].diffuse.contentsTransform = SCNMatrix4MakeScale(16 * 40 / 60, 16, 1)
+        floor.materials[0].normal.contentsTransform = SCNMatrix4MakeScale(16 * 40 / 60, 16, 1)
+        floor.materials[0].roughness.contentsTransform = SCNMatrix4MakeScale(16 * 40 / 60, 16, 1)
         let floorNode = SCNNode(geometry: floor)
         floorNode.eulerAngles.x = -.pi / 2
-        floorNode.position = SCNVector3(4, 0, 4)
+        floorNode.position = SCNVector3(13.9, 0, 4)
         room.addChildNode(floorNode)
 
         let plaster = surface("white_plaster_02", repeat: 1)
@@ -271,14 +291,14 @@ final class RoomScene {
 
         add(SCNBox(width: 5.8, height: 0.04, length: 3.9, chamferRadius: 0.015), surface("poly_wool_herringbone", repeat: 3), SCNVector3(-0.7, 0.02, -2.85), to: room)
 
-        // A print above the sofa.
+        // A print hung low over the sofa, below the band of wall Checkup's headline sits on.
         let dark = pbr(Self.rgb(0x26262A), roughness: 0.5)
-        add(SCNBox(width: 2.3, height: 1.5, length: 0.06, chamferRadius: 0.01), dark, SCNVector3(-1.2, 3.25, -5.96), to: room)
+        add(SCNBox(width: 2.0, height: 1.3, length: 0.06, chamferRadius: 0.01), dark, SCNVector3(-1.2, 2.16, -5.96), to: room)
         let art = SCNMaterial()
         art.lightingModel = .physicallyBased
         art.diffuse.contents = Self.print
         art.roughness.contents = NSNumber(value: 0.9)
-        add(SCNPlane(width: 2.1, height: 1.3), art, SCNVector3(-1.2, 3.25, -5.925), to: room)
+        add(SCNPlane(width: 1.84, height: 1.14), art, SCNVector3(-1.2, 2.16, -5.925), to: room)
 
         // Linen curtains either side of the window, on a rail.
         let linen = pbr(Self.rgb(0xE6DFD3), roughness: 1)
@@ -373,6 +393,8 @@ final class RoomScene {
         // Sky outside the window.
         sky.lightingModel = .constant
         sky.isDoubleSided = true
+        sky.emission.contents = Self.garden
+        sky.diffuse.contents = Self.garden
         let skyPlane = SCNPlane(width: 60, height: 30)
         skyPlane.materials = [sky]
         let skyNode = SCNNode(geometry: skyPlane)
@@ -391,6 +413,7 @@ final class RoomScene {
         let tones: [UInt32] = [0x3E4C63, 0x8E4F36, 0xB8934F, 0x56705A, 0x7D8289, 0x5F4553, 0xCFC5B4]
         let mats = tones.map { pbr(Self.rgb($0), roughness: 0.85) }
         let books = SCNNode()
+        var gaps3: [(Int, SCNVector3)] = []
         // Top surfaces of the scanned case's boards, in metres (read once from its mesh), and the gap above each.
         let boardTops: [CGFloat] = [0.11, 0.39, 0.67, 0.96, 1.28, 1.66]
         let gaps: [CGFloat] = [0.24, 0.24, 0.25, 0.27, 0.34, 0.36]
@@ -405,13 +428,19 @@ final class RoomScene {
                     SCNVector3(x + bw / 2, boardY + bh / 2 + 0.005, shelf.position.z + 0.02), to: books)
                 x += bw + 0.01
                 k += 1
-                if k % 8 == 5 { x += 0.45 }
+                if k % 8 == 5 {
+                    // a gap: room for three books that are lying around the room right now
+                    if (1...4).contains(row) { for j in 0..<3 { gaps3.append((row, SCNVector3(x + 0.03 + CGFloat(j) * 0.135, boardY, shelf.position.z))) } }
+                    x += 0.45
+                }
                 if row == 2 && x > shelf.position.x { break }   // leave room for a vase
             }
         }
         let flat = books.flattenedClone()
         flat.castsShadow = true
         scene.rootNode.addChildNode(flat)
+        // Middle shelves first: they're the ones in view.
+        shelfSpots = gaps3.sorted { abs(Double($0.0) - 2.5) < abs(Double($1.0) - 2.5) }.map(\.1)
     }
 
     /// A brushed-steel pedal bin with a lid that opens from the back.
@@ -576,6 +605,26 @@ final class RoomScene {
         } }
         return normals(h, n, strength: 3)
     }()
+    /// What the window looks out on: sky fading to a pale horizon over a soft band of distant trees and lawn. It's
+    /// multiplied over the sky colour, so evening tints it too; depth of field keeps it soft.
+    private static let garden: NSImage = NSImage(size: NSSize(width: 256, height: 128), flipped: false) { r in
+        NSGradient(colors: [rgb(0xC9D9EC), rgb(0xF4F6F8)], atLocations: [1, 0.42], colorSpace: .deviceRGB)?.draw(in: r, angle: -90)
+        let trees = NSBezierPath()
+        trees.move(to: NSPoint(x: 0, y: 0)); trees.line(to: NSPoint(x: 0, y: 48))
+        var x: CGFloat = 0
+        var s: UInt64 = 7
+        while x < 256 {
+            s = s &* 6364136223846793005 &+ 1
+            let w = 10 + CGFloat(s >> 59) * 2, h = 46 + CGFloat((s >> 40) & 15)
+            trees.curve(to: NSPoint(x: x + w, y: 48), controlPoint1: NSPoint(x: x + w * 0.1, y: h + 6), controlPoint2: NSPoint(x: x + w * 0.9, y: h + 6))
+            x += w
+        }
+        trees.line(to: NSPoint(x: 256, y: 0)); trees.close()
+        rgb(0x8E9E86).setFill(); trees.fill()
+        rgb(0xA9B79A).setFill(); NSRect(x: 0, y: 0, width: 256, height: 22).fill()
+        return true
+    }
+
     private static let cornerShade: NSImage = NSImage(size: NSSize(width: 4, height: 64), flipped: false) { r in
         NSGradient(colors: [NSColor(white: 0, alpha: 0.38), NSColor(white: 0, alpha: 0.12), NSColor(white: 0, alpha: 0)], atLocations: [0, 0.35, 1], colorSpace: .deviceRGB)?.draw(in: r, angle: 90)
         return true
@@ -648,24 +697,47 @@ final class RoomScene {
             addScaled(model("plastic_bottle_gallon"))
             footprint = 0.55
         case .books:
-            let tones: [UInt32] = [0x3E4C63, 0x8E4F36, 0x56705A, 0xB8934F]
-            var y: CGFloat = 0
-            for i in 0..<4 {
-                let h: CGFloat = 0.07 + CGFloat(i % 2) * 0.02
-                let g = SCNBox(width: 0.5 - CGFloat(i) * 0.03, height: h, length: 0.36, chamferRadius: 0.006)
-                g.materials = [pbr(Self.rgb(tones[i]), roughness: 0.85)]
-                let b = SCNNode(geometry: g)
-                b.position = SCNVector3(CGFloat(i % 2) * 0.03, y + h / 2, 0)
-                b.eulerAngles.y = CGFloat(i) * 0.12 - 0.15
-                b.castsShadow = true
-                n.addChildNode(b)
-                y += h
-            }
-            n.scale = SCNVector3(1.5, 1.5, 1.5)
-            footprint = 0.6
+            return makeBook(variant).0
         }
         n.addChildNode(shadow(footprint))
         return n
+    }
+
+    // MARK: books
+
+    /// Books lying around are drawn this much larger than on the shelf.
+    private let bookDrop: CGFloat = 1.4
+    private lazy var pages: SCNMaterial = pbr(Self.rgb(0xE9E1CD), roughness: 0.95)
+    private lazy var covers: [SCNMaterial] = [0x7A2E2A, 0x2F4A6B, 0x3F5D45, 0xB08A3E, 0x5B3A5E, 0x2B2B30, 0xC4B49A, 0x8C5A3C]
+        .map { pbr(Self.rgb(UInt32($0)), roughness: 0.72) }
+
+    /// One hardback, standing as it would on a shelf: cloth on the sides and spine, page edges top, bottom and back.
+    /// Returns the book and its thickness, height and depth.
+    private func makeBook(_ i: Int) -> (SCNNode, SCNVector3) {
+        let t: CGFloat = 0.075 + CGFloat((i * 7) % 5) * 0.011
+        let h: CGFloat = 0.33 + CGFloat((i * 11) % 5) * 0.014
+        let d: CGFloat = 0.27 + CGFloat((i * 5) % 4) * 0.02
+        let g = SCNBox(width: t, height: h, length: d, chamferRadius: 0.005)
+        let c = covers[i % covers.count]
+        g.materials = [c, c, pages, c, pages, pages]   // front (spine), right, back, left, top, bottom
+        let b = SCNNode(geometry: g)
+        b.castsShadow = true
+        let n = SCNNode()
+        n.addChildNode(b)
+        return (n, SCNVector3(t, h, d))
+    }
+
+    /// Where a shelved book stands: upright in its gap, spine flush with the books beside it.
+    private func shelfPosition(_ p: Piece) -> SCNVector3? {
+        guard let i = p.shelf, i < shelfSpots.count, let b = p.book else { return nil }
+        let s = shelfSpots[i]
+        return SCNVector3(s.x + b.x / 2, s.y + b.y / 2 + 0.005, s.z + 0.02 + 0.21 - b.z / 2)
+    }
+
+    private func claimShelf(_ p: Piece) {
+        guard p.shelf == nil else { return }
+        let used = Set(pieces.compactMap(\.shelf))
+        p.shelf = (0..<shelfSpots.count).first { !used.contains($0) }
     }
 
     // MARK: appearance
@@ -683,11 +755,11 @@ final class RoomScene {
         scene.lightingEnvironment.contents = Self.assets.appendingPathComponent("hdri/brown_photostudio_04_1k.hdr")
         scene.lightingEnvironment.intensity = dark ? 0.06 : 0.75
         let skyColor = dark ? NSColor(red: 0.10, green: 0.14, blue: 0.26, alpha: 1) : NSColor(red: 0.93, green: 0.96, blue: 1.0, alpha: 1)
-        sky.emission.contents = skyColor
-        sky.diffuse.contents = skyColor
-        sky.emission.intensity = dark ? 1 : 1.6
+        // The garden outside: daylight, or the same view at dusk, tinted by the evening sky.
+        sky.multiply.contents = dark ? skyColor : NSColor.white
+        sky.emission.intensity = dark ? 0.5 : 0.95
         sun.light?.color = dark ? NSColor(red: 0.62, green: 0.72, blue: 1.0, alpha: 1) : NSColor(red: 1.0, green: 0.93, blue: 0.82, alpha: 1)
-        sun.light?.intensity = dark ? 600 : 6200
+        sun.light?.intensity = dark ? 600 : 3600
         window.light?.intensity = dark ? 60 : 700
         window.light?.color = dark ? NSColor(red: 0.55, green: 0.65, blue: 1, alpha: 1) : NSColor(red: 0.92, green: 0.96, blue: 1, alpha: 1)
         fill.light?.color = dark ? NSColor(red: 0.55, green: 0.6, blue: 0.8, alpha: 1) : NSColor(red: 1, green: 0.97, blue: 0.93, alpha: 1)
@@ -724,7 +796,7 @@ final class RoomScene {
             let total = group.reduce(0) { $0 + $1.bytes }
             guard total > 0 else { continue }
             let gb = Double(total) / 1e9
-            let n = removable ? min(12, max(group.count, Int((log2(gb + 1) * 3).rounded()))) : min(3, max(1, Int((log2(gb + 1) * 0.7).rounded())))
+            let n = removable ? min(26, max(group.count, Int((7 + log2(gb + 1) * 4.5).rounded()))) : min(8, max(3, Int((log2(gb + 1) * 1.6).rounded())))
             var left = n
             for (i, b) in group.enumerated() {
                 let share = i == group.count - 1 ? left : max(1, Int((Double(n) * Double(b.bytes) / Double(total)).rounded()))
@@ -758,16 +830,31 @@ final class RoomScene {
     private func newPiece(_ b: Bucket, index: Int) -> Piece {
         let kinds = Self.kinds(for: b.key)
         let kind = kinds[index % kinds.count]
-        let node = make(kind)
+        variant += 1
+        let (node, dims): (SCNNode, SCNVector3?) = kind == .books ? { let (n, d) = makeBook(variant); return (n, d) }() : (make(kind), nil)
         node.name = b.key
         let p = Piece(node: node, key: b.key, step: b.step, removable: b.removable, slot: freeSlot(own: !b.removable, floorOnly: kind == .box || kind == .bottle))
+        p.book = dims
+        p.folds = kind == .box
         clutterRoot.addChildNode(node)
         pieces.append(p)
         return p
     }
 
     private func setInRoom(_ p: Piece) {
+        if p.place == .shelved, let at = shelfPosition(p) {
+            p.node.position = at; p.node.eulerAngles = SCNVector3Zero; p.node.opacity = 1; p.node.isHidden = false
+            p.node.scale = SCNVector3(1, 1, 1)
+            return
+        }
         let (pos, rot) = roomSpot(p)
+        if let b = p.book {
+            // Dropped on its cover, a little crooked, and drawn a size up so it reads from across the room.
+            p.node.position = SCNVector3(pos.x, pos.y + b.x * bookDrop / 2, pos.z)
+            p.node.eulerAngles = SCNVector3(p.slot % 3 == 1 ? 0.08 : 0, rot, .pi / 2)
+            p.node.opacity = 1; p.node.isHidden = false; p.node.scale = SCNVector3(bookDrop, bookDrop, bookDrop)
+            return
+        }
         p.node.position = pos
         p.node.eulerAngles = SCNVector3(0, rot, 0)
         p.node.opacity = 1
@@ -777,44 +864,6 @@ final class RoomScene {
     }
 
     private var bagged: [Piece] { pieces.filter { $0.place == .bagged } }
-    private func bagIndex(_ p: Piece) -> Int { min(bagSpots.count - 1, (bagged.firstIndex { $0 === p } ?? 0) / bagCapacity) }
-
-    /// Shows the right number of bags, each filled to how much is in it.
-    private func updateBags(animated: Bool, delay: TimeInterval = 0) {
-        let n = bagged.count
-        let want = n == 0 ? 0 : min(bagSpots.count, (n + bagCapacity - 1) / bagCapacity)
-        while bags.count < want {
-            let b = model("trashbag")
-            b.name = "userCache"
-            b.position = bagSpots[bags.count]
-            b.eulerAngles.y = [0.4, -0.7, 1.6][bags.count % 3]
-            b.addChildNode(shadow(0.75))
-            b.scale = SCNVector3(0.001, 0.001, 0.001)
-            clutterRoot.addChildNode(b)
-            bags.append(b)
-        }
-        while bags.count > want { let b = bags.removeLast(); b.runAction(.sequence([.fadeOut(duration: 0.25), .removeFromParentNode()])) }
-        for (i, b) in bags.enumerated() {
-            let inBag = max(0, min(bagCapacity, n - i * bagCapacity))
-            let fill = i == bags.count - 1 && bags.count == bagSpots.count ? min(1, CGFloat(n - i * bagCapacity) / CGFloat(bagCapacity)) : CGFloat(inBag) / CGFloat(bagCapacity)
-            let s = U * 1.25 * (0.5 + 0.5 * fill)
-            if animated {
-                let grow = SCNAction.customAction(duration: 0.4) { node, t in
-                    let u = Double(t) / 0.4
-                    let k = CGFloat(1 - pow(1 - u, 3))
-                    let from = node.value(forKey: "from") as? CGFloat ?? s
-                    let cur = from + (s - from) * k
-                    // a soft squash as things land: wider and lower for a moment
-                    let squash = CGFloat(sin(u * .pi)) * 0.08
-                    node.scale = SCNVector3(cur * (1 + squash), cur * (1 - squash), cur * (1 + squash))
-                }
-                b.setValue(b.scale.y, forKey: "from")
-                b.runAction(.sequence([.wait(duration: delay), grow]), forKey: "fill")
-            } else {
-                b.scale = SCNVector3(s, s, s)
-            }
-        }
-    }
 
     /// Adds or removes pieces so each bucket shows the right amount.
     private func reconcile(_ buckets: [Bucket], only steps: Set<String>? = nil, animated: Bool) -> [Piece] {
@@ -853,9 +902,9 @@ final class RoomScene {
         node.runAction(.sequence([.wait(duration: delay), .group([.fadeIn(duration: 0.2), grow])]))
     }
 
-    /// Before Roomy has ever looked: the room as it is, untidy. Bags from an earlier scan are left alone.
+    /// Before Roomy has ever looked: the room as it is, untidy. A bag from an earlier scan is left alone.
     func scatter(_ buckets: [Bucket], animated: Bool) {
-        guard pieces.isEmpty && bags.isEmpty else { return }
+        guard pieces.isEmpty && bagFill == 0 else { return }
         processed = []
         let source = buckets.contains { $0.bytes > 0 } ? buckets : Self.firstLook
         _ = reconcile(source, animated: animated)
@@ -866,8 +915,8 @@ final class RoomScene {
     /// A scan started. Nothing moves; findings are picked up as each part reports.
     func beginScan() { processed = [] }
 
-    /// A part of the scan finished: anything new it found shows up where it lies, then everything it found is
-    /// swept into the bag.
+    /// A part of the scan finished: anything new it found shows up where it lies, its finds light up, and then they
+    /// go one by one into the bag. Books it found go back on the shelf.
     func collect(_ buckets: [Bucket], finished steps: Set<String>) {
         let fresh = steps.subtracting(processed)
         guard !fresh.isEmpty else { return }
@@ -875,69 +924,237 @@ final class RoomScene {
         let added = reconcile(buckets, only: fresh, animated: true)
         let lead = added.isEmpty ? 0.1 : 0.6
         let sweep = pieces.filter { $0.removable && $0.place == .room && fresh.contains($0.step) }
-        bagUp(sweep, lead: lead)
-        updateBags(animated: true, delay: lead)
-        wake(lead + Double(sweep.count) * 0.12 + 1.2)
+        let books = pieces.filter { !$0.removable && $0.place == .room && fresh.contains($0.step) }
+        tidy(sweep, books, lead: lead)
     }
 
-    /// The finished state: findings in bags by the bin, your things where they are.
+    /// The finished state: findings in the bag by the bin, which is now full; your books on the shelf.
     func settle(_ buckets: [Bucket], animated: Bool) {
         let added = reconcile(buckets, animated: animated)
         let sweep = pieces.filter { $0.removable && $0.place == .room }
+        let books = pieces.filter { !$0.removable && $0.place == .room }
+        processed = ["cleanup", "apps", "lens", "ai", "large", "dev", "health", "dups"]
         if animated {
-            bagUp(sweep, lead: added.isEmpty ? 0.1 : 0.6)
+            let end = tidy(sweep, books, lead: added.isEmpty ? 0.1 : 0.6)
+            if !bagged.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + end) { [weak self] in self?.fillBag(to: 1); self?.tie() }
+            }
+            wake(end + 1.4)
         } else {
             for p in sweep { p.place = .bagged; p.node.isHidden = true }
-            pieces.filter { $0.place == .room }.forEach(setInRoom)
+            for p in books { claimShelf(p); p.place = .shelved }
+            pieces.filter { $0.place != .bagged }.forEach(setInRoom)
+            bagFill = bagged.isEmpty ? 0 : 1
+            bagModel?.scale = bagScale(bagFill)
+            wake(0.3)
         }
-        updateBags(animated: animated, delay: animated ? 0.6 : 0)
-        processed = ["cleanup", "apps", "lens", "ai", "large", "dev", "health", "dups"]
-        wake(animated ? Double(sweep.count) * 0.12 + 1.6 : 0.3)
     }
 
-    /// Each piece is tossed into its bag: a short arc to the bag's mouth, shrinking as it drops in.
+    /// Lights up what was found, tosses the clutter into the bag one piece at a time and flies the books home.
+    /// Returns when the last piece lands.
+    @discardableResult
+    private func tidy(_ sweep: [Piece], _ books: [Piece], lead: TimeInterval) -> TimeInterval {
+        guard !sweep.isEmpty || !books.isEmpty else { return lead }
+        select(sweep + books, lead: lead)
+        let start = lead + (reduceMotion ? 0.2 : 0.55)
+        bagUp(sweep, lead: start)
+        shelve(books, lead: start + 0.1)
+        let end = start + max(Double(sweep.count) * toss(sweep.count) + 0.6, Double(books.count) * 0.24 + 1.1)
+        wake(end + 1.2)
+        return end
+    }
+
+    // MARK: picking things up
+
+    /// A soft ring of light, drawn once and tinted per use.
+    private lazy var ringMaterial: SCNMaterial = {
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { r in
+            NSGradient(colors: [.clear, .clear, NSColor(white: 1, alpha: 0.95), NSColor(white: 1, alpha: 0.35), .clear],
+                       atLocations: [0, 0.52, 0.74, 0.86, 1], colorSpace: .deviceRGB)?.draw(in: NSBezierPath(ovalIn: r), relativeCenterPosition: .zero)
+            return true
+        }
+        m.blendMode = .add
+        m.writesToDepthBuffer = false
+        return m
+    }()
+
+    /// Each find lights up where it lies (a ring of the accent colour under it) and hops, as if picked out.
+    private func select(_ found: [Piece], lead: TimeInterval) {
+        guard !reduceMotion else { return }
+        let tint = NSColor(Theme.currentAccent).usingColorSpace(.sRGB) ?? .systemBlue
+        let m = ringMaterial.copy() as! SCNMaterial
+        m.multiply.contents = tint
+        for (i, p) in found.enumerated() {
+            let delay = lead + Double(i) * 0.035
+            let size: CGFloat = p.book != nil ? 0.75 : 0.9
+            let plane = SCNPlane(width: size, height: size)
+            plane.materials = [m]
+            let ring = SCNNode(geometry: plane)
+            ring.eulerAngles.x = -.pi / 2
+            ring.castsShadow = false
+            let (spot, _) = roomSpot(p)
+            ring.position = SCNVector3(p.node.position.x, spot.y + 0.015, p.node.position.z)
+            ring.opacity = 0
+            ring.scale = SCNVector3(0.3, 0.3, 0.3)
+            clutterRoot.addChildNode(ring)
+            let grow = SCNAction.scale(to: 1, duration: 0.32)
+            grow.timingFunction = Self.settle
+            ring.runAction(.sequence([.wait(duration: delay), .group([.fadeOpacity(to: 0.9, duration: 0.18), grow]),
+                                      .wait(duration: 0.5 + Double(i) * 0.12), .fadeOut(duration: 0.35), .removeFromParentNode()]))
+            let up = SCNAction.moveBy(x: 0, y: 0.16, z: 0, duration: 0.14); up.timingMode = .easeOut
+            let down = SCNAction.moveBy(x: 0, y: -0.16, z: 0, duration: 0.2); down.timingMode = .easeIn
+            p.node.runAction(.sequence([.wait(duration: delay + 0.05), up, down]), forKey: "hop")
+        }
+    }
+
+    /// Each piece is tossed into the bag in turn: a short arc to its mouth, shrinking as it drops in, and the bag fills
+    /// a little more with every one.
     private func bagUp(_ sweep: [Piece], lead: TimeInterval) {
+        guard !sweep.isEmpty else { return }
+        let total = CGFloat(max(1, pieces.filter(\.removable).count))
+        var landed = CGFloat(bagged.count)
         for p in sweep { p.place = .bagged }
+        let mouth = SCNVector3(bagSpot.x, 0.95, bagSpot.z)
         for (i, p) in sweep.enumerated() {
-            let spot = bagSpots[bagIndex(p)]
-            let mouth = SCNVector3(spot.x, 1.05, spot.z)
-            let delay = lead + Double(i) * 0.12
+            let delay = lead + Double(i) * toss(sweep.count)
+            landed += 1
+            let fill = landed / total
             if reduceMotion {
                 p.node.runAction(.sequence([.wait(duration: delay), .fadeOut(duration: 0.25), .hide()]), forKey: "move")
             } else {
-                arc(p.node, to: mouth, height: 0.9, duration: 0.6, delay: delay, spin: true, shrinkTo: 0.3)
+                p.node.removeAction(forKey: "hop")
+                arc(p.node, to: mouth, height: 1.0, duration: 0.6, delay: delay, spin: true, shrinkTo: p.folds ? 0.22 : 0.3, squash: p.folds ? 0.15 : 1)
                 p.node.runAction(.sequence([.wait(duration: delay + 0.5), .fadeOut(duration: 0.1), .hide()]), forKey: "fade")
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + (reduceMotion ? 0.25 : 0.6)) { [weak self] in self?.fillBag(to: fill) }
         }
     }
 
-    /// Clean: the bags go into the bin one at a time and the room is left tidy. (In Safe mode no files are touched;
-    /// the room still shows what Clean would do, and the next scan finds the same clutter again.)
-    func throwAway() {
-        let toss = bags
-        guard !toss.isEmpty else { return }
-        openLid(true)
-        let flight = reduceMotion ? 0.3 : 0.75, step = reduceMotion ? 0.1 : 0.45
-        let into = SCNVector3(bin.x, 0.7, bin.z)
-        for (i, b) in toss.enumerated() {
-            let delay = 0.35 + Double(i) * step
+    /// Books fly back to their gap on the shelf and slide in, spine out.
+    private func shelve(_ books: [Piece], lead: TimeInterval) {
+        for (i, p) in books.enumerated() {
+            claimShelf(p)
+            p.place = .shelved
+            guard let at = shelfPosition(p) else { continue }
+            let delay = lead + Double(i) * 0.24
             if reduceMotion {
-                b.runAction(.sequence([.wait(duration: delay), .fadeOut(duration: flight)]), forKey: "move")
-            } else {
-                arc(b, to: into, height: 1.4, duration: flight, delay: delay, spin: false, shrinkTo: 0.62, tumble: 0.6)
-                b.runAction(.sequence([.wait(duration: delay + flight * 0.8), .fadeOut(duration: flight * 0.2)]), forKey: "fade")
+                p.node.runAction(.sequence([.wait(duration: delay), .fadeOut(duration: 0.2),
+                                            .run { n in n.position = at; n.eulerAngles = SCNVector3Zero }, .fadeIn(duration: 0.25)]), forKey: "move")
+                continue
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay + flight) { [weak self] in self?.nod() }
+            p.node.removeAction(forKey: "hop")
+            let front = SCNVector3(at.x, at.y, at.z + 0.45)
+            var start = SCNVector3Zero, e0 = SCNVector3Zero, s0: CGFloat = 1
+            let duration = 0.8
+            let fly = SCNAction.customAction(duration: duration) { n, el in
+                let u = CGFloat(Double(el) / duration)
+                let t = u < 0.5 ? 2 * u * u : 1 - pow(-2 * u + 2, 2) / 2
+                let peak = max(start.y, front.y) + 1.1
+                let y = start.y + (front.y - start.y) * t + 4 * (peak - max(start.y, front.y)) * u * (1 - u)
+                n.position = SCNVector3(start.x + (front.x - start.x) * t, y, start.z + (front.z - start.z) * t)
+                n.eulerAngles = SCNVector3(e0.x * (1 - t), e0.y * (1 - t), e0.z * (1 - t))
+                let k = s0 + (1 - s0) * t
+                n.scale = SCNVector3(k, k, k)
+            }
+            let slide = SCNAction.move(to: at, duration: 0.22)
+            slide.timingFunction = Self.settle
+            p.node.runAction(.sequence([.wait(duration: delay), .run { n in start = n.position; e0 = n.eulerAngles; s0 = n.scale.y }, fly, slide]), forKey: "move")
         }
-        let done = 0.35 + Double(toss.count - 1) * step + flight + 0.3
+    }
+
+    // MARK: the bag
+
+    /// Stays beside the bin; its child is the bag itself, replaced after every clean.
+    private let bagNode = SCNNode()
+    private var bagModel: SCNNode?
+    /// How full the bag is, 0 to 1. It only ever fills until it's thrown away.
+    private var bagFill: CGFloat = 0
+
+    private func buildBag() {
+        bagNode.position = bagSpot
+        bagNode.name = "userCache"
+        bagNode.addChildNode(shadow(1.5))
+        clutterRoot.addChildNode(bagNode)
+        newBag(animated: false)
+    }
+
+    /// A fresh, empty bag: the plastic slumped by the bin, waiting.
+    private func newBag(animated: Bool) {
+        let m = model("trashbag")
+        m.eulerAngles.y = 0.5
+        bagModel = m
+        bagFill = 0
+        m.scale = bagScale(0)
+        bagNode.addChildNode(m)
+        if animated { m.opacity = 0; m.runAction(.fadeIn(duration: 0.5)) }
+    }
+
+    /// Empty, the bag is a low slump of plastic; full, it stands at its scanned size.
+    private func bagScale(_ f: CGFloat) -> SCNVector3 {
+        let s = U * 1.3
+        return SCNVector3(s * (0.84 + 0.16 * f), s * (0.18 + 0.82 * f), s * (0.84 + 0.16 * f))
+    }
+
+    /// Grows the bag to `f` full with a soft squash, as if something just dropped in.
+    private func fillBag(to f: CGFloat) {
+        guard let m = bagModel else { return }
+        let target = max(bagFill, min(1, f))
+        guard target > bagFill || f >= 1 else { return }
+        bagFill = target
+        let to = bagScale(target)
+        if reduceMotion { m.scale = to; wake(0.2); return }
+        var from = SCNVector3Zero
+        let grow = SCNAction.customAction(duration: 0.42) { n, el in
+            let u = Double(el) / 0.42
+            let k = CGFloat(1 - pow(1 - u, 3))
+            let sq = CGFloat(sin(u * .pi)) * 0.09
+            n.scale = SCNVector3((from.x + (to.x - from.x) * k) * (1 + sq), (from.y + (to.y - from.y) * k) * (1 - sq), (from.z + (to.z - from.z) * k) * (1 + sq))
+        }
+        m.runAction(.sequence([.run { n in from = n.scale }, grow]), forKey: "fill")
+        bagNode.childNode(withName: "shadow", recursively: false)?.scale = SCNVector3(0.55 + 0.45 * target, 0.55 + 0.45 * target, 1)
+        wake(0.6)
+    }
+
+    /// Full: a quick twist at the neck, as the bag is tied.
+    private func tie() {
+        guard let m = bagModel, !reduceMotion else { return }
+        let twist = SCNAction.rotateBy(x: 0, y: 0.45, z: 0, duration: 0.18); twist.timingMode = .easeOut
+        let back = SCNAction.rotateBy(x: 0, y: -0.45, z: 0, duration: 0.42); back.timingFunction = Self.settle
+        m.runAction(.sequence([.wait(duration: 0.3), twist, back]), forKey: "tie")
+        wake(1.2)
+    }
+
+    /// Clean: the bag goes into the bin and the room is left tidy, with a fresh bag ready. (In Safe mode no files are
+    /// touched; the room still shows what Clean would do, and the next scan finds the same clutter again.)
+    func throwAway() {
+        guard bagFill > 0 else { return }
+        openLid(true)
+        let flight = reduceMotion ? 0.3 : 0.85
+        let into = SCNVector3(bin.x, 0.75, bin.z)
+        if reduceMotion {
+            bagNode.runAction(.sequence([.wait(duration: 0.35), .fadeOut(duration: flight)]), forKey: "move")
+        } else {
+            arc(bagNode, to: into, height: 1.5, duration: flight, delay: 0.35, spin: false, shrinkTo: 0.6, tumble: 0.6)
+            bagNode.runAction(.sequence([.wait(duration: 0.35 + flight * 0.82), .fadeOut(duration: flight * 0.18)]), forKey: "fade")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 + flight) { [weak self] in self?.nod() }
+        let done = 0.35 + flight + 0.35
         DispatchQueue.main.asyncAfter(deadline: .now() + done) { [weak self] in
             guard let self else { return }
             self.openLid(false)
-            for b in toss { b.removeFromParentNode() }
-            self.bags.removeAll()
             for p in self.bagged { self.pieces.removeAll { $0 === p }; p.node.removeFromParentNode() }
+            self.bagModel?.removeFromParentNode()
+            self.bagNode.removeAllActions()
+            self.bagNode.position = self.bagSpot
+            self.bagNode.eulerAngles = SCNVector3Zero
+            self.bagNode.scale = SCNVector3(1, 1, 1)
+            self.bagNode.opacity = 1
+            self.bagNode.childNode(withName: "shadow", recursively: false)?.opacity = 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in self?.newBag(animated: true); self?.wake(0.8) }
         }
-        wake(done + 1.4)
+        wake(done + 1.6)
     }
 
     private func openLid(_ open: Bool) {
@@ -957,7 +1174,7 @@ final class RoomScene {
     /// Moves a node along a lifted arc: it rises, travels and lands softly, the way you'd toss something
     /// underhand. Its contact shadow fades while it's in the air.
     private func arc(_ node: SCNNode, to end: SCNVector3, height: CGFloat, duration: TimeInterval, delay: TimeInterval,
-                     spin: Bool, shrinkTo: CGFloat = 1, tumble amount: CGFloat? = nil) {
+                     spin: Bool, shrinkTo: CGFloat = 1, squash: CGFloat = 1, tumble amount: CGFloat? = nil) {
         node.removeAction(forKey: "move")
         let shadow = node.childNode(withName: "shadow", recursively: false)
         let tumble = amount ?? (spin ? CGFloat.random(in: 1.5...2.6) : 0)
@@ -970,7 +1187,8 @@ final class RoomScene {
             n.position = SCNVector3(start.x + (end.x - start.x) * t, y, start.z + (end.z - start.z) * t)
             n.eulerAngles = SCNVector3(tumble * u * 0.6, yaw0 + (spin ? 2.4 : 0) * t, tumble * u * 0.25)
             let s = base * (1 + (shrinkTo - 1) * u)
-            n.scale = SCNVector3(s, s, s)
+            let fold = 1 + (squash - 1) * u * u
+            n.scale = SCNVector3(s, s * fold, s)
             shadow?.opacity = max(0, 1 - 4 * min(u, 1 - u))
         }
         let begin = SCNAction.run { n in start = n.position; yaw0 = n.eulerAngles.y; base = n.scale.y }
@@ -1015,6 +1233,8 @@ struct RoomSceneView: NSViewRepresentable {
         v.backgroundColor = .black
         v.addGestureRecognizer(NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.click(_:))))
         room.view = v
+        // Draw the room at once on arrival, rather than waiting for something in it to move.
+        DispatchQueue.main.async { room.wake(0.4) }
         return v
     }
 

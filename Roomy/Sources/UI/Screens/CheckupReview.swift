@@ -8,6 +8,7 @@ struct CheckupReview: View {
     @Environment(\.dismiss) var dismiss
     var onClean: () -> Void
     @State private var open: Set<String> = []
+    @State private var confirmQuit = false
 
     struct Group: Identifiable { var id: String; var title: String; var note: String; var items: [CleanItem]; var ai = false }
 
@@ -16,14 +17,23 @@ struct CheckupReview: View {
             let items = c.items.filter { $0.byMole == true }
             return items.isEmpty ? nil : Group(id: c.key, title: c.title, note: c.note, items: items)
         }
+        // Roomy's own finds, which go to the Trash after a last check.
+        let ours = model.snap.categories.filter(\.safe).flatMap(\.items).filter { $0.app != nil }
+        let updates = ours.filter { !$0.path.hasPrefix(RoomyRules.containers) }, boxed = ours.filter { $0.path.hasPrefix(RoomyRules.containers) }
+        if !updates.isEmpty { g.append(Group(id: "updates", title: "App update downloads", note: "Copies of updates apps already downloaded. They go to the Trash.", items: updates)) }
+        if !boxed.isEmpty { g.append(Group(id: "sandboxed", title: "Sandboxed apps' caches", note: "Caches of apps that aren't open. The apps rebuild them; they go to the Trash.", items: boxed)) }
         let ai = model.snap.aiCare.clear.map { CleanItem(path: $0.path, name: $0.name, bytes: $0.bytes, note: $0.why) }
         if !ai.isEmpty { g.append(Group(id: "ai", title: "AI Tools", note: "Caches and old versions AI tools leave behind. Chats, projects and models stay.", items: ai, ai: true)) }
         return g
     }
     var held: [CleanItem] { model.snap.categories.flatMap(\.held) }
 
-    func isOn(_ i: CleanItem, ai: Bool) -> Bool { ai ? model.selection.contains("ai:" + i.path) : !model.checkupSkip.contains(i.path) }
+    func isOn(_ i: CleanItem, ai: Bool) -> Bool {
+        if i.app != nil { return model.selection.contains(i.path) }
+        return ai ? model.selection.contains("ai:" + i.path) : !model.checkupSkip.contains(i.path)
+    }
     func set(_ i: CleanItem, ai: Bool, _ on: Bool) {
+        if i.app != nil { if on { model.selection.insert(i.path) } else { model.selection.remove(i.path) }; return }
         if ai { if on { model.selection.insert("ai:" + i.path) } else { model.selection.remove("ai:" + i.path) } }
         else { if on { model.checkupSkip.remove(i.path) } else { model.checkupSkip.insert(i.path) } }
     }
@@ -37,6 +47,7 @@ struct CheckupReview: View {
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(groups) { groupCard($0) }
+                    if !model.quitToInclude.isEmpty { quitCard }
                     if !held.isEmpty { heldCard }
                     if let t = model.snap.trashBytes, t > 0 {
                         Label("Your Trash (\(Fmt.bytes(t))) isn't touched. Empty it in Mail & Trash when you're sure.", systemImage: "trash")
@@ -48,6 +59,7 @@ struct CheckupReview: View {
             footer
         }
         .frame(minWidth: 820, idealWidth: 900, minHeight: 600, idealHeight: 680)
+        .presentationBackground { AreaGround(area: .cleanup) }
     }
 
     var header: some View {
@@ -119,6 +131,37 @@ struct CheckupReview: View {
         .opacity(isOn(i, ai: ai) ? 1 : 0.55)
     }
 
+    /// Caches left because their app is open: quitting those apps (as ⌘Q would) includes them.
+    var quitCard: some View {
+        let apps = model.quitToInclude
+        let total = apps.reduce(0) { $0 + $1.bytes }
+        let names = apps.map(\.name)
+        let list = names.count <= 2 ? names.joined(separator: " and ") : names.dropLast().joined(separator: ", ") + " and " + names.last!
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Quit to include \(Fmt.bytes(total))").font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Quit \(names.count == 1 ? list : "\(names.count) Apps")…") { confirmQuit = true }
+                    .buttonStyle(.glass).disabled(model.rescanning.contains("cleanup"))
+            }
+            Text("These caches belong to apps that are open. Roomy never clears an open app's cache.").font(.system(size: 12)).foregroundStyle(.secondary)
+            ForEach(apps, id: \.bundle) { a in
+                HStack(spacing: 10) {
+                    if let p = NSWorkspace.shared.urlForApplication(withBundleIdentifier: a.bundle)?.path { FileIcon(path: p, size: 20) }
+                    Text(a.name).font(.system(size: 12)).lineLimit(1)
+                    Spacer()
+                    Text(Fmt.bytes(a.bytes)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading).glass(12)
+        .confirmationDialog("Quit \(list)?", isPresented: $confirmQuit) {
+            Button("Quit and Scan Again") { Task { await model.quit(apps.map(\.bundle)) } }
+        } message: {
+            Text("\(names.count == 1 ? "It quits" : "They quit") the way \(names.count == 1 ? "it does" : "they do") when you press ⌘Q, asking about anything unsaved. Then Roomy looks at the caches again.")
+        }
+    }
+
     var heldCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -144,9 +187,10 @@ struct CheckupReview: View {
             Text("\(selectedCount) selected").font(.system(size: 12, weight: .medium)).monospacedDigit()
             Button("All") { for g in groups { for i in g.items { set(i, ai: g.ai, true) } } }.buttonStyle(.link)
             Button("None") { for g in groups { for i in g.items { set(i, ai: g.ai, false) } } }.buttonStyle(.link)
-            Button("Recommended") { model.checkupSkip = []; model.preselectAI() }.buttonStyle(.link)
+            Button("Recommended") { model.checkupSkip = []; model.preselect(); model.preselectAI() }.buttonStyle(.link)
             Spacer()
-            Text(model.safeMode ? "Safe mode: nothing is removed" : "Caches are removed permanently · AI items go to the Trash").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(model.safeMode ? "Safe mode: nothing is removed" : "Mole's caches are removed for good · update downloads, sandboxed caches and AI items go to the Trash")
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             Button { dismiss(); onClean() } label: { Text("Clean \(Fmt.bytes(model.checkupBytes))").frame(minWidth: 120) }
                 .buttonStyle(.glassProminent).controlSize(.large).keyboardShortcut(.defaultAction)
                 .disabled(model.checkupBytes == 0 || model.scanIsStale || model.isCleaning)

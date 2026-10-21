@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Disk Map's bubbles: every item a drop of Liquid Glass sized by what it takes up, tinted by what it is and carrying
-/// its Finder icon, floating over the open folder. They spring to a tidy packed layout, shoulder each other aside,
-/// swell under the pointer and can be thrown; drops that touch flow into each other like liquid. The simulation runs
+/// Disk Map's bubbles: every item a sphere of tinted glass sized by what it takes up, carrying its Finder icon.
+/// They spring to a packed layout with air between them, shoulder each other aside, swell under the pointer and can
+/// be thrown. The simulation runs
 /// only while something moves, so a still map costs nothing.
 struct BubbleField: View {
     var items: [LensNode]
@@ -22,18 +22,10 @@ struct BubbleField: View {
             TimelineView(.animation(paused: !running)) { tl in
                 let _ = advance(tl.date, geo.size)
                 ZStack {
-                    FolderDisc(size: geo.size)
-                    // The glass drops share one container so touching drops merge; their icons and labels sit in a layer
-                    // above it, because the container composites its glass over anything inside it.
-                    GlassEffectContainer(spacing: 12) {
-                        ZStack(alignment: .topLeading) {
-                            ForEach(sim.bodies, id: \.id) { b in
-                                GlassBubble(b: b, hot: sim.hovered == b.id, picked: picked.contains(b.node.id)).position(b.p)
-                            }
-                        }
-                        .frame(width: geo.size.width, height: geo.size.height)
-                    }
                     ZStack(alignment: .topLeading) {
+                        ForEach(sim.bodies, id: \.id) { b in
+                            LensSphere(b: b, hot: sim.hovered == b.id, picked: picked.contains(b.node.id)).position(b.p)
+                        }
                         ForEach(sim.bodies, id: \.id) { b in BubbleLabel(b: b).position(b.p) }
                     }
                     .frame(width: geo.size.width, height: geo.size.height)
@@ -102,31 +94,36 @@ struct BubbleField: View {
     }
 }
 
-/// The open folder: a soft disc of the theme's colour that the glass drops float over and bend.
-struct FolderDisc: View {
-    var size: CGSize
-    var body: some View {
-        let d = min(size.width, size.height) * 0.99
-        Circle()
-            .fill(RadialGradient(colors: [Palette.accent.opacity(0.30), Palette.accent.opacity(0.10), Palette.accent.opacity(0.04)],
-                                 center: UnitPoint(x: 0.42, y: 0.35), startRadius: 0, endRadius: d * 0.6))
-            .overlay(Circle().strokeBorder(Palette.accent.opacity(0.22), lineWidth: 1))
-            .frame(width: d, height: d)
-            .position(x: size.width / 2, y: size.height / 2)
-    }
-}
-
-/// One item as a drop of Liquid Glass: the real glass material tinted by safety class, with the item's Finder icon,
-/// name and size inside when there's room.
-struct GlassBubble: View {
+/// One item as a sphere of tinted glass in the area's hue: nearly clear in the middle, deepening towards the edge,
+/// with light gathering along its lower rim and a soft highlight up top. Spheres keep a little air between them;
+/// what kind of thing it is shows as a dot beside its size, not as its colour.
+struct LensSphere: View {
     var b: BubbleSim.Body
     var hot: Bool
     var picked: Bool
+    @Environment(\.colorScheme) var scheme
     var body: some View {
-        let r = b.r
-        Color.clear.glassEffect(.regular.tint(b.node.cls.color.opacity(hot ? 0.45 : 0.3)), in: Circle())
-            .frame(width: max(1, r * 2), height: max(1, r * 2))
-            .overlay(Circle().strokeBorder(Palette.accent, lineWidth: 2.5).padding(-3).opacity(picked ? 1 : 0))
+        let r = max(1, b.r), a = Ground.hue(.files, Theme.current), dark = scheme == .dark
+        ZStack {
+            Circle().fill(RadialGradient(stops: [
+                .init(color: a.color(sat: 0.6, bri: dark ? 0.55 : 1).opacity(dark ? 0.10 : 0.22), location: 0),
+                .init(color: a.color(sat: 0.8, bri: dark ? 0.6 : 0.98).opacity(dark ? 0.22 : 0.34), location: 0.72),
+                .init(color: a.color(sat: 0.9, bri: dark ? 0.85 : 0.95).opacity(dark ? 0.5 : 0.55), location: 1),
+            ], center: UnitPoint(x: 0.5, y: 0.42), startRadius: 0, endRadius: r))
+            // light gathering in the lower rim, as it does in a glass ball
+            Circle().strokeBorder(LinearGradient(stops: [.init(color: .white.opacity(0.0), location: 0.35),
+                                                         .init(color: a.color(sat: 0.35, bri: 1).opacity(hot ? 1 : 0.8), location: 1)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: max(1.5, r * 0.06))
+                .blur(radius: max(1, r * 0.035))
+            Circle().strokeBorder(.white.opacity(dark ? 0.22 : 0.5), lineWidth: 0.8)
+            Ellipse().fill(.white.opacity(dark ? 0.16 : 0.4)).frame(width: r * 0.9, height: r * 0.32).blur(radius: r * 0.08)
+                .offset(y: -r * 0.6)
+        }
+        .frame(width: r * 2, height: r * 2)
+        .brightness(hot ? 0.06 : 0)
+        .shadow(color: a.color(sat: 1, bri: 0.4).opacity(dark ? 0.5 : 0.18), radius: r * 0.18, y: r * 0.1)
+        .overlay(Circle().strokeBorder(Palette.accent, lineWidth: 2.5).padding(-4).opacity(picked ? 1 : 0))
+        .animation(.easeOut(duration: 0.18), value: hot)
     }
 }
 
@@ -137,11 +134,14 @@ struct BubbleLabel: View {
         let r = b.r, n = b.node
         VStack(spacing: r >= 46 ? 3 : 0) {
             if r >= 18 {
-                FileIcon(path: n.other || n.path.hasPrefix("macos:") ? "/System" : n.path, size: min(72, r * (r >= 46 ? 0.6 : 0.95)))
+                FileIcon(path: n.other || n.path.hasPrefix("macos:") ? "/System" : n.path, size: min(96, r * (r >= 46 ? 0.62 : 0.95)))
             }
             if r >= 46 {
-                Text(n.display).font(.system(size: r > 80 ? 13 : 11, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
-                Text(Fmt.bytes(n.bytes)).font(.system(size: r > 80 ? 12 : 10)).monospacedDigit().foregroundStyle(.secondary)
+                Text(n.display).font(.system(size: r > 110 ? 17 : r > 80 ? 13 : 11, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
+                HStack(spacing: 4) {
+                    Circle().fill(n.cls.color).frame(width: 6, height: 6)
+                    Text(Fmt.bytes(n.bytes)).font(.system(size: r > 110 ? 15 : r > 80 ? 12 : 10, weight: .semibold, design: .rounded)).monospacedDigit()
+                }
             }
         }
         .frame(maxWidth: r * 1.5)
@@ -204,13 +204,13 @@ final class BubbleSim {
         let mid = CGPoint(x: size.width / 2, y: size.height / 2)
         bodies = placed.map { pl in
             if var b = old[pl.id] {
-                b.target = pl.center; b.targetR = pl.r; b.node = pl.node
-                if snap { b.p = pl.center; b.r = pl.r }
+                b.target = pl.center; b.targetR = pl.r * 0.9; b.node = pl.node
+                if snap { b.p = pl.center; b.r = pl.r * 0.9 }
                 return b
             }
             // New bubbles start small, a little towards the middle, and push each other out as they grow.
             let start = CGPoint(x: pl.center.x + (mid.x - pl.center.x) * 0.3 + .random(in: -6...6), y: pl.center.y + (mid.y - pl.center.y) * 0.3 + .random(in: -6...6))
-            return Body(id: pl.id, node: pl.node, p: snap ? pl.center : start, r: snap ? pl.r : 1, target: pl.center, targetR: pl.r)
+            return Body(id: pl.id, node: pl.node, p: snap ? pl.center : start, r: snap ? pl.r * 0.9 : 1, target: pl.center, targetR: pl.r * 0.9)
         }
         ids = items.map(\.id)
         self.size = size
@@ -256,7 +256,7 @@ final class BubbleSim {
             for i in 0..<(n - 1) {
                 for j in (i + 1)..<n {
                     let dx = bodies[j].p.x - bodies[i].p.x, dy = bodies[j].p.y - bodies[i].p.y
-                    let d = max(0.001, hypot(dx, dy)), minD = bodies[i].r + bodies[j].r + 2
+                    let d = max(0.001, hypot(dx, dy)), minD = bodies[i].r + bodies[j].r + 8
                     guard d < minD else { continue }
                     let nx = dx / d, ny = dy / d, overlap = minD - d
                     let mi = bodies[i].r * bodies[i].r, mj = bodies[j].r * bodies[j].r
