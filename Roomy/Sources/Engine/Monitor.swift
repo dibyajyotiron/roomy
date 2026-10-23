@@ -139,13 +139,18 @@ final class Monitor {
     }
 
     /// `ps` grouped by app bundle, CPU as a share of the whole Mac. Used while the process feed is off.
+    /// Memory is each process's footprint, the number Activity Monitor's Memory column shows, not its resident size:
+    /// resident size leaves out compressed memory and memory mapped for a virtual machine (OrbStack's Linux VM read
+    /// 1.8 GB resident against a 7 GB footprint).
     nonisolated static func appUsage() async -> [AppUsage] {
         let r = await Shell.run("/bin/ps", ["-Ao", "pid=,pcpu=,rss=,comm="], timeout: 10)
+        let others = await SystemFootprints.shared.current()
         let ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
         var apps: [String: AppUsage] = [:]
         for line in r.output.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-            guard parts.count == 4, let cpu = Double(parts[1]), let rss = Int64(parts[2]) else { continue }
+            guard parts.count == 4, let pid = Int32(parts[0]), let cpu = Double(parts[1]), let rssKB = Int64(parts[2]) else { continue }
+            let rss = (footprint(pid) ?? others[pid] ?? rssKB * 1024) / 1024
             let comm = String(parts[3])
             let m = comm.firstMatch(#"^(.*?/([^/]+)\.app)/"#)
             let key = m?[2] ?? Paths.name(comm)
@@ -175,5 +180,37 @@ final class Monitor {
         guard p.mine, p.pid > 1 else { return false }
         if let app = NSRunningApplication(processIdentifier: p.pid) { return force ? app.forceTerminate() : app.terminate() }
         return kill(p.pid, force ? SIGKILL : SIGTERM) == 0
+    }
+}
+
+extension Monitor {
+    /// A process's physical footprint (Activity Monitor's Memory column), for processes Roomy may inspect: yours.
+    nonisolated static func footprint(_ pid: Int32) -> Int64? {
+        var ri = rusage_info_v4()
+        let ok = withUnsafeMutablePointer(to: &ri) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) } } == 0
+        return ok ? Int64(clamping: ri.ri_phys_footprint) : nil
+    }
+}
+
+/// Footprints of processes Roomy isn't allowed to inspect (WindowServer and other system ones), read from `top`, which
+/// may. A `top` snapshot costs most of a second of CPU, so it's taken at most every 30 seconds.
+actor SystemFootprints {
+    static let shared = SystemFootprints()
+    private var cache: [Int32: Int64] = [:]
+    private var at = Date.distantPast
+    func current() async -> [Int32: Int64] {
+        guard Date().timeIntervalSince(at) > 30 else { return cache }
+        at = Date()
+        let r = await Shell.run("/usr/bin/top", ["-l", "1", "-o", "mem", "-n", "80", "-stats", "pid,mem"], timeout: 15)
+        var out: [Int32: Int64] = [:]
+        var table = false
+        for line in r.output.split(separator: "\n") {
+            let cols = line.split(separator: " ", omittingEmptySubsequences: true)
+            if cols.first == "PID" { table = true; continue }
+            guard table, cols.count >= 2, let pid = Int32(cols[0]) else { continue }
+            out[pid] = ProcessFeed.bytes(String(cols[1]))
+        }
+        if !out.isEmpty { cache = out }
+        return cache
     }
 }

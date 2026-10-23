@@ -423,6 +423,7 @@ private struct TopApps: View {
                 }
                 .frame(height: 24)
             }
+            if !byCPU && !Demo.on { MemoryBreakdown(m: model.monitor.sample.memory).padding(.top, 6) }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.fill))
@@ -532,5 +533,32 @@ private struct TotalsRow: View {
             Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Where all of the Mac's memory is right now, in parts that add up exactly to its RAM: apps, compressed, macOS
+/// (wired: the kernel, drivers and the GPU), cached files and free. The app list above shows footprints, like Activity
+/// Monitor, which count each app's compressed and swapped-out memory at full size, so those add up to more.
+private struct MemoryBreakdown: View {
+    var m: MemoryReading
+    var body: some View {
+        let parts: [(String, Int64, Color)] = [("Apps", m.app, Palette.accent), ("Compressed", m.compressed, Palette.warn),
+                                               ("macOS", m.wired, .gray), ("Cached files", m.cached, Palette.ok.opacity(0.7)), ("Free", m.free, .secondary.opacity(0.25))]
+        let total = max(1, parts.reduce(0) { $0 + $1.1 })
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { g in
+                HStack(spacing: 1.5) {
+                    ForEach(parts, id: \.0) { p in
+                        if p.1 > 0 { RoundedRectangle(cornerRadius: 2).fill(p.2).frame(width: max(2, g.size.width * CGFloat(p.1) / CGFloat(total))) }
+                    }
+                }
+            }
+            .frame(height: 6).clipShape(Capsule())
+            Text(parts.filter { $0.1 > 0 }.map { "\($0.0) \(Fmt.bytes($0.1))" }.joined(separator: " · ")
+                 + (m.swapUsed > 0 ? " · \(Fmt.bytes(m.swapUsed)) swapped to disk" : ""))
+                .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .help("Your \(Fmt.bytes(m.total)) of memory right now. App sizes above are footprints, as Activity Monitor shows them: they count each app's compressed and swapped-out memory at full size, so together they can add up to more than your memory.")
+        .accessibilityElement(children: .combine)
     }
 }
