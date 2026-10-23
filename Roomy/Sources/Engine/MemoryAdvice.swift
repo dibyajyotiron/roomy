@@ -23,7 +23,12 @@ struct MemoryAdvice: Equatable {
 
     /// One or two sentences: why memory is where it is.
     var summary: String
+    /// Full or tight: swap in use, or a fifth of memory compressed, or macOS reporting pressure.
     var tight: Bool
+    /// macOS's own pressure level says memory is short (yellow or red in Activity Monitor), not just full.
+    var pressured = false
+    /// What open apps hold together (their footprints), against the Mac's memory.
+    var wanted: Int64 = 0
     /// Open, not in front, not used for a while and nearly idle: quitting them is the quickest relief.
     var idle: [IdleApp]
     var idleTotal: Int64 { idle.reduce(0) { $0 + $1.footprint } }
@@ -94,7 +99,7 @@ struct MemoryAdvice: Equatable {
         if m.swapUsed > 2_000_000_000 && tight {
             tips.append("Swap shrinks on its own once memory frees up; a restart clears it at once.")
         }
-        return MemoryAdvice(summary: summary, tight: tight, idle: idle, pushedOut: Array(pushedOut), tips: tips)
+        return MemoryAdvice(summary: summary, tight: tight, pressured: m.pressureLevel >= 2, wanted: wanted, idle: idle, pushedOut: Array(pushedOut), tips: tips)
     }
 
     static func span(_ t: TimeInterval) -> String {

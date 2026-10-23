@@ -41,8 +41,12 @@ struct ActivityView: View {
             if resource == .thermals {
                 ScrollView { ThermalsPanel().padding(.horizontal, 28).padding(.bottom, 24) }
             } else {
-                Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
-                if resource == .memory { Live { MemoryAdviceCard() }.padding(.horizontal, 28).padding(.bottom, 12) }
+                if resource == .memory {
+                    // Memory: where it is and what would help, side by side, so the process list keeps its room.
+                    Live { MemoryPanels { freeUp } }.padding(.horizontal, 28).padding(.bottom, 12)
+                } else {
+                    Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
+                }
                 processes.padding(.horizontal, 28).padding(.bottom, 16)
             }
         }
@@ -659,65 +663,211 @@ enum Explain {
     static let thermalState = "macOS's own verdict on heat. When it's serious or critical, macOS slows the processor to cool down; Activity Monitor doesn't show this."
 }
 
-/// Why memory is where it is and what would help: apps open but not in use (with what quitting each frees), apps whose
-/// memory macOS has mostly squeezed or moved to the SSD, and tips for the biggest kinds of use. All from live readings.
+/// Activity's Memory view: two panels side by side, the same height. Left, where the Mac's memory is; right, what
+/// would help. They stack when the window is too narrow for both.
+struct MemoryPanels<FreeUp: View>: View {
+    @ViewBuilder var freeUp: FreeUp
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                MemoryOverview(freeUp: { freeUp }).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                MemoryAdviceCard().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minWidth: 720)
+            VStack(spacing: 12) {
+                MemoryOverview(freeUp: { freeUp })
+                MemoryAdviceCard()
+            }
+        }
+    }
+}
+
+/// Where the Mac's memory is, as one bar the width of its RAM: apps, macOS, compressed, cached files and free, which add
+/// up to the whole bar. Swap is a hatched piece outside the bar, so "full, and spilling onto the SSD" reads at a glance.
+struct MemoryOverview<FreeUp: View>: View {
+    @Environment(AppModel.self) var model
+    @ViewBuilder var freeUp: FreeUp
+
+    var body: some View {
+        let m = model.monitor.sample.memory
+        let level = model.monitor.pressure.level
+        let tint = [Palette.ok, Palette.warn, Palette.bad][level]
+        let parts = [MemoryPart(name: "Apps", bytes: m.app, color: Palette.accent, help: Explain.app),
+                     MemoryPart(name: "macOS", bytes: m.wired, color: Color.primary.opacity(0.38), help: Explain.wired),
+                     MemoryPart(name: "Compressed", bytes: m.compressed, color: Palette.warn, help: Explain.compressed),
+                     MemoryPart(name: "Cached files", bytes: m.cached, color: Palette.accent.opacity(0.3), help: Explain.cached),
+                     MemoryPart(name: "Free", bytes: m.free, color: Color.primary.opacity(0.08), help: "Memory nothing is using right now.")]
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Where your \(Fmt.bytes(m.total)) is").font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 8)
+                Explained(Explain.pressure) {
+                    HStack(spacing: 6) {
+                        Circle().fill(tint).frame(width: 7, height: 7)
+                        Text(["Pressure normal", "Pressure rising", "Pressure high"][level]).font(.system(size: 11.5, weight: .medium)).foregroundStyle(tint)
+                        Spark(values: model.monitor.history.map(\.memory.pressurePercent), max: 100, tint: tint).frame(width: 64, height: 16)
+                    }
+                }
+            }
+            MemoryMap(parts: parts, total: m.total, swap: m.swapUsed)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 10, alignment: .leading)], alignment: .leading, spacing: 8) {
+                ForEach(parts) { p in
+                    Explained(p.help) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2.5).fill(p.color).frame(width: 9, height: 9).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.name).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(Fmt.bytes(p.bytes)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            }
+                        }
+                    }
+                }
+                if m.swapUsed > 0 {
+                    Explained(Explain.swap) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Hatch(color: Palette.bad).frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2.5)).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("On the SSD").font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(Fmt.bytes(m.swapUsed)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Explained(Explain.used) {
+                    Text("\(Fmt.bytes(m.used)) in use, as Activity Monitor counts it").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                freeUp
+            }
+        }
+        .padding(14)
+        .glass(14)
+    }
+}
+
+/// One part of the Mac's memory, as the bar and its legend show it.
+struct MemoryPart: Identifiable { var id: String { name }; var name: String; var bytes: Int64; var color: Color; var help: String }
+
+/// The bar: RAM as its full width, split into its parts, and swap as a hatched piece past its end.
+struct MemoryMap: View {
+    var parts: [MemoryPart]
+    var total: Int64
+    var swap: Int64
+    var body: some View {
+        GeometryReader { g in
+            let over = swap > 0 ? min(0.45, Double(swap) / Double(max(1, total))) : 0
+            let gap: CGFloat = over > 0 ? 6 : 0
+            let ram = (g.size.width - gap) / CGFloat(1 + over)
+            let sum = max(1, parts.reduce(0) { $0 + $1.bytes })
+            HStack(spacing: gap) {
+                HStack(spacing: 1.5) {
+                    ForEach(parts) { p in
+                        if p.bytes > 0 { Rectangle().fill(p.color).frame(width: max(2, ram * CGFloat(p.bytes) / CGFloat(sum))) }
+                    }
+                }
+                .frame(width: ram, alignment: .leading)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                if over > 0 {
+                    Hatch(color: Palette.bad)
+                        .frame(width: max(8, g.size.width - ram - gap))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Palette.bad.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                }
+            }
+        }
+        .frame(height: 16)
+        .accessibilityElement()
+        .accessibilityLabel(parts.map { "\($0.name) \(Fmt.bytes($0.bytes))" }.joined(separator: ", ") + (swap > 0 ? ", and \(Fmt.bytes(swap)) moved to the SSD" : ""))
+    }
+}
+
+/// Diagonal stripes: memory that isn't in RAM any more.
+struct Hatch: View {
+    var color: Color
+    var body: some View {
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(color.opacity(0.12)))
+            var p = Path()
+            var x: CGFloat = -size.height
+            while x < size.width { p.move(to: CGPoint(x: x, y: size.height)); p.addLine(to: CGPoint(x: x + size.height, y: 0)); x += 5 }
+            ctx.stroke(p, with: .color(color.opacity(0.55)), lineWidth: 1.4)
+        }
+    }
+}
+
+/// What would help: a one-line verdict, apps open but not in use (with what quitting each frees), the apps macOS has
+/// squeezed most (as a bar of how much of each is squeezed), and the most useful tip. From live readings only.
 struct MemoryAdviceCard: View {
     @Environment(AppModel.self) var model
     var body: some View {
         let a = model.monitor.memoryAdvice
+        let total = model.monitor.sample.memory.total
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: a.tight ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(a.tight ? Palette.warn : Palette.ok).font(.system(size: 13))
-                Text(a.summary).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                // Worded to agree with the pressure shown beside it: "tight" only when macOS itself says so.
+                Image(systemName: a.pressured ? "exclamationmark.triangle.fill" : a.tight ? "arrow.down.right.and.arrow.up.left.circle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(a.pressured ? Palette.warn : a.tight ? Palette.accent : Palette.ok)
+                Text(a.pressured ? (a.wanted > total ? "Open apps want \(Fmt.bytes(a.wanted)) on a \(Fmt.bytes(total)) Mac" : "Memory is tight")
+                     : a.tight ? "Memory is full, and macOS is coping by squeezing what apps aren't using" : "Memory is fine")
+                    .font(.system(size: 13, weight: .semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
-            if !a.idle.isEmpty || !a.pushedOut.isEmpty {
-                HStack(alignment: .top, spacing: 18) {
-                    if !a.idle.isEmpty {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Open but not in use · quitting frees about \(Fmt.bytes(a.idleTotal))").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                            ForEach(a.idle.prefix(5)) { i in
-                                HStack(spacing: 8) {
-                                    FileIcon(path: i.path, size: 18)
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text(i.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                        Text(i.lastUsed).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-                                    }
-                                    Spacer(minLength: 6)
-                                    Text(Fmt.bytes(i.footprint)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
-                                    Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
-                                        .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
-                                }
+            .help(a.summary)
+            if !a.idle.isEmpty {
+                section("Open but not in use", trailing: "frees about \(Fmt.bytes(a.idleTotal))") {
+                    ForEach(a.idle.prefix(3)) { i in
+                        HStack(spacing: 8) {
+                            FileIcon(path: i.path, size: 18)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(i.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(i.lastUsed).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
                             }
+                            Spacer(minLength: 6)
+                            Text(Fmt.bytes(i.footprint)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                            Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
+                                .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if !a.pushedOut.isEmpty {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Squeezed or on the SSD").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                                .help("Memory these apps hold but haven't touched lately, so macOS compressed it or moved it to swap. It still counts against your Mac until the app lets go of it or quits.")
-                            ForEach(a.pushedOut) { p in
-                                HStack(spacing: 8) {
-                                    if let path = p.path { FileIcon(path: path, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
-                                    Text(p.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                    Spacer(minLength: 6)
-                                    Text("\(Fmt.bytes(p.compressed)) of \(Fmt.bytes(p.footprint))").font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
-            ForEach(a.tips, id: \.self) { t in
-                Label { Text(t).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } icon: {
-                    Image(systemName: "lightbulb").font(.system(size: 10.5)).foregroundStyle(Palette.accent)
+            if !a.pushedOut.isEmpty {
+                section("Squeezed or on the SSD", trailing: nil) {
+                    ForEach(a.pushedOut.prefix(a.idle.isEmpty ? 4 : 2)) { p in
+                        HStack(spacing: 8) {
+                            if let path = p.path { FileIcon(path: path, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
+                            Text(p.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            SqueezeBar(share: Double(p.compressed) / Double(max(1, p.footprint))).frame(width: 64, height: 6)
+                            Text("\(Fmt.bytes(p.compressed)) of \(Fmt.bytes(p.footprint))").font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.secondary)
+                                .frame(minWidth: 92, alignment: .trailing)
+                        }
+                        .help("macOS has compressed or moved to the SSD \(Fmt.bytes(p.compressed)) of the \(Fmt.bytes(p.footprint)) \(p.name) holds: memory it isn't using right now.")
+                    }
                 }
             }
+            if let tip = a.tips.first {
+                Label { Text(tip).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true) } icon: {
+                    Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Palette.accent)
+                }
+                .help(a.tips.joined(separator: "\n\n"))
+            }
+            Spacer(minLength: 0)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .glass(14)
+    }
+
+    @ViewBuilder func section<Rows: View>(_ title: String, trailing: String?, @ViewBuilder rows: () -> Rows) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                if let trailing { Text("· " + trailing).font(.system(size: 11)).foregroundStyle(.secondary) }
+            }
+            rows()
+        }
     }
 
     func quit(_ path: String, _ name: String) {
@@ -725,5 +875,19 @@ struct MemoryAdviceCard: View {
         guard !apps.isEmpty else { return }
         apps.forEach { $0.terminate() }
         model.flash("Asked \(name) to quit.")
+    }
+}
+
+/// How much of an app's memory macOS has squeezed: the amber part is compressed or on the SSD, the rest is in use.
+struct SqueezeBar: View {
+    var share: Double
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Palette.accent.opacity(0.35))
+                Capsule().fill(Palette.warn).frame(width: g.size.width * CGFloat(min(1, max(0, share))))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
