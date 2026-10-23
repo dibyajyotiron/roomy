@@ -168,8 +168,10 @@ final class Monitor {
         var grouped: [String: AppUsage] = [:]
         let ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
         for r in rows {
-            let key = r.appPath.map { (Paths.name($0) as NSString).deletingPathExtension } ?? r.name
-            var a = grouped[key] ?? AppUsage(name: key, path: r.appPath, cpu: 0, mem: 0, processes: 0)
+            // Grouped exactly like Activity's Apps view: the outermost .app, under the name the app gives itself.
+            let outer = ProcessRow.outerApp(r)
+            let key = outer.map { ProcessRow.bundleInfo($0).name } ?? r.name
+            var a = grouped[key] ?? AppUsage(name: key, path: outer ?? r.appPath, cpu: 0, mem: 0, processes: 0)
             a.cpu += r.cpu / ncpu; a.mem += r.memory; a.compressed += r.compressed; a.processes += 1
             grouped[key] = a
         }
@@ -191,9 +193,9 @@ final class Monitor {
             guard parts.count == 4, let pid = Int32(parts[0]), let cpu = Double(parts[1]), let rssKB = Int64(parts[2]) else { continue }
             let rss = (footprint(pid) ?? others[pid] ?? rssKB * 1024) / 1024
             let comm = String(parts[3])
-            let m = comm.firstMatch(#"^(.*?/([^/]+)\.app)/"#)
-            let key = m?[2] ?? Paths.name(comm)
-            var a = apps[key] ?? AppUsage(name: key, path: m?[1], cpu: 0, mem: 0, processes: 0)
+            let outer = ProcessRow.outerApp(ProcessRow(pid: pid, name: "", user: "", path: comm))
+            let key = outer.map { ProcessRow.bundleInfo($0).name } ?? Paths.name(comm)
+            var a = apps[key] ?? AppUsage(name: key, path: outer, cpu: 0, mem: 0, processes: 0)
             a.cpu += cpu / ncpu; a.mem += rss * 1024; a.processes += 1
             apps[key] = a
         }
@@ -216,6 +218,8 @@ final class Monitor {
     /// Quits a process: politely for apps (they can save), with SIGTERM for others. `force` uses SIGKILL.
     /// Only your own processes; macOS's and other users' processes can't be quit from here.
     func quit(_ p: ProcessRow, force: Bool) -> Bool {
+        // An app's row (negative id) quits the app itself, which takes its helpers with it.
+        if p.isApp, p.mine, let app = NSRunningApplication(processIdentifier: p.shownPID) { return force ? app.forceTerminate() : app.terminate() }
         guard p.mine, p.pid > 1 else { return false }
         if let app = NSRunningApplication(processIdentifier: p.pid) { return force ? app.forceTerminate() : app.terminate() }
         return kill(p.pid, force ? SIGKILL : SIGTERM) == 0

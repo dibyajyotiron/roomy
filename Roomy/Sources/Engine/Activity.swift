@@ -246,7 +246,76 @@ struct ProcessRow: Identifiable, Hashable {
     var diskRead: Double?, diskWrite: Double?
     var path: String?
     var appPath: String?
+    /// Set on an app's row in the Apps view: the processes it adds up (nil for a single process).
+    var members: [ProcessRow]?
     var mine: Bool { user == NSUserName() }
+    /// An app's row: its id is the negated pid of the app's main process, so it never clashes with a member's.
+    var isApp: Bool { pid < 0 }
+    var shownPID: Int32 { abs(pid) }
+}
+
+extension ProcessRow {
+    /// One row per app, Activity Monitor style: every process inside the same .app (helpers, renderers, web pages)
+    /// added together under the app's name, with the processes kept as its members.
+    static func groupedByApp(_ rows: [ProcessRow]) -> [ProcessRow] {
+        var groups: [String: [ProcessRow]] = [:]
+        for r in rows { if let a = outerApp(r) { groups[a, default: []].append(r) } }
+        return groups.compactMap { path, ms -> ProcessRow? in
+            guard let main = ms.first(where: { $0.path?.hasPrefix(path + "/Contents/MacOS/") == true }) ?? ms.min(by: { $0.pid < $1.pid }) else { return nil }
+            var g = main
+            g.pid = -main.pid
+            let info = bundleInfo(path)
+            g.name = info.name
+            g.cpu = ms.reduce(0) { $0 + $1.cpu }
+            g.memory = ms.reduce(0) { $0 + $1.memory }
+            g.compressed = ms.reduce(0) { $0 + $1.compressed }
+            g.energy = ms.reduce(0) { $0 + $1.energy }
+            g.threads = ms.reduce(0) { $0 + $1.threads }
+            g.ports = ms.reduce(0) { $0 + $1.ports }
+            g.netIn = ms.reduce(0) { $0 + $1.netIn }
+            g.netOut = ms.reduce(0) { $0 + $1.netOut }
+            let reads = ms.compactMap(\.diskRead), writes = ms.compactMap(\.diskWrite)
+            g.diskRead = reads.isEmpty ? nil : reads.reduce(0, +)
+            g.diskWrite = writes.isEmpty ? nil : writes.reduce(0, +)
+            g.path = path
+            // The icon comes from appPath: an app without an icon of its own shows the app that started it
+            // (Claude Code, which Claude's desktop app runs from its own folder, shows Claude's icon).
+            g.appPath = info.hasIcon ? path : (parentApp(of: main.pid) ?? path)
+            g.members = ms.count > 1 ? ms : nil
+            return g
+        }
+    }
+
+    /// The app a process belongs to: the outermost .app in its path, so helpers that are small apps nested inside an
+    /// app (Codex (Service), Chrome's helpers) count as that app. macOS's own agents in /System/Library (Dock,
+    /// Control Center, loginwindow) aren't apps you run, so they're left out; apps in /System/Applications stay.
+    /// The name an app gives itself (CFBundleDisplayName, else CFBundleName, else its file name) and whether it has an
+    /// icon. Read once per bundle.
+    nonisolated(unsafe) private static var infoCache: [String: (name: String, hasIcon: Bool)] = [:]
+    static func bundleInfo(_ path: String) -> (name: String, hasIcon: Bool) {
+        if let c = infoCache[path] { return c }
+        let plist = NSDictionary(contentsOfFile: path + "/Contents/Info.plist") as? [String: Any] ?? [:]
+        let name = [plist["CFBundleDisplayName"], plist["CFBundleName"]].compactMap { $0 as? String }.first { !$0.isEmpty }
+            ?? (Paths.name(path) as NSString).deletingPathExtension
+        let hasIcon = plist["CFBundleIconFile"] != nil || plist["CFBundleIconName"] != nil || plist["CFBundleIcons"] != nil
+        infoCache[path] = (name, hasIcon)
+        return (name, hasIcon)
+    }
+
+    /// The app that started process `pid` (its parent's outermost .app), if any.
+    static func parentApp(of pid: Int32) -> String? {
+        var info = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0, info.pbi_ppid > 1 else { return nil }
+        var buf = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(Int32(info.pbi_ppid), &buf, UInt32(buf.count)) > 0 else { return nil }
+        return outerApp(ProcessRow(pid: Int32(info.pbi_ppid), name: "", user: "", path: String(cString: buf)))
+    }
+
+    static func outerApp(_ r: ProcessRow) -> String? {
+        guard let base = r.path ?? r.appPath, let range = (base + "/").range(of: ".app/") else { return nil }
+        let outer = String(base[..<range.lowerBound]) + ".app"
+        return outer.hasPrefix("/System/Library/") || outer.hasPrefix("/usr/") || outer.hasPrefix("/Library/Apple/") ? nil : outer
+    }
 }
 
 /// Streams `top` (which sees every process, as Activity Monitor does) and `nettop` while someone is looking, and adds

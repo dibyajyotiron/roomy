@@ -19,10 +19,13 @@ struct ActivityView: View {
     var m: Monitor { model.monitor }
 
     var rows: [ProcessRow] {
-        m.processes.filter { r in
-            (scope == .all || scope == .mine && r.mine || scope == .apps && r.mine && r.appPath != nil)
-                && (search.isEmpty || r.name.localizedCaseInsensitiveContains(search) || String(r.pid) == search)
+        func matches(_ r: ProcessRow) -> Bool { search.isEmpty || r.name.localizedCaseInsensitiveContains(search) || String(r.shownPID) == search }
+        // Apps: one row per app with its processes inside, found by the app's name or any of its processes'.
+        if scope == .apps {
+            return ProcessRow.groupedByApp(m.processes.filter(\.mine))
+                .filter { matches($0) || ($0.members ?? []).contains(where: matches) }
         }
+        return m.processes.filter { r in (scope == .all || r.mine) && matches(r) }
     }
 
     var body: some View {
@@ -240,7 +243,10 @@ struct ActivityView: View {
         }
     }
 
-    var selectedRow: ProcessRow? { selection.count == 1 ? m.processes.first { $0.pid == selection.first } : nil }
+    var selectedRow: ProcessRow? {
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return rows.first { $0.pid == id } ?? rows.lazy.compactMap { $0.members?.first { $0.pid == id } }.first
+    }
 }
 
 /// Evaluates its content in its own body, so whatever the content reads is tracked for this view alone.
@@ -282,54 +288,67 @@ struct ProcessTable: View {
         Group {
             switch resource {
             case .cpu, .thermals:
-                Table(rows.sorted(using: cpuSort), selection: $selection, sortOrder: $cpuSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $cpuSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("% CPU", value: \.cpu) { Text(String(format: "%.1f", $0.cpu)).monospacedDigit() }.width(70)
                     TableColumn("CPU Time", value: \.cpuTime) { Text($0.cpuTime).monospacedDigit() }.width(80)
                     TableColumn("Threads", value: \.threads) { Text("\($0.threads)").monospacedDigit() }.width(60)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(cpuSort) }
             case .memory:
-                Table(rows.sorted(using: memSort), selection: $selection, sortOrder: $memSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $memSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Memory", value: \.memory) { Text(Fmt.bytes($0.memory)).monospacedDigit() }.width(80)
                     TableColumn("Threads", value: \.threads) { Text("\($0.threads)").monospacedDigit() }.width(60)
                     TableColumn("Ports", value: \.ports) { Text("\($0.ports)").monospacedDigit() }.width(60)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(memSort) }
             case .energy:
-                Table(rows.sorted(using: energySort), selection: $selection, sortOrder: $energySort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $energySort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Energy Impact", value: \.energy) { Text(String(format: "%.1f", $0.energy)).monospacedDigit() }.width(100)
                     TableColumn("% CPU", value: \.cpu) { Text(String(format: "%.1f", $0.cpu)).monospacedDigit() }.width(70)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(energySort) }
             case .disk:
-                Table(rows.sorted(using: diskSort), selection: $selection, sortOrder: $diskSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $diskSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Read /s", value: \.diskReadValue) { Text($0.diskRead.map { Fmt.rate($0).joined } ?? "—").monospacedDigit() }.width(90)
                     TableColumn("Written /s", value: \.diskWriteValue) { Text($0.diskWrite.map { Fmt.rate($0).joined } ?? "—").monospacedDigit() }.width(90)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(diskSort) }
             case .network:
-                Table(rows.sorted(using: netSort), selection: $selection, sortOrder: $netSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $netSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Received /s", value: \.netIn) { Text(Fmt.rate($0.netIn).joined).monospacedDigit() }.width(90)
                     TableColumn("Sent /s", value: \.netOut) { Text(Fmt.rate($0.netOut).joined).monospacedDigit() }.width(90)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(netSort) }
             }
         }
         .contextMenu(forSelectionType: Int32.self) { ids in
-            if let id = ids.first, let p = rows.first(where: { $0.pid == id }) {
+            if let id = ids.first, let p = rows.first(where: { $0.pid == id }) ?? rows.lazy.compactMap({ $0.members?.first { $0.pid == id } }).first {
                 Button("Quit…") { quit(p) }.disabled(!p.mine)
                 if let path = p.path ?? p.appPath { Button("Show in Finder") { reveal(path) } }
-                Button("Copy PID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("\(p.pid)", forType: .string) }
+                Button("Copy PID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("\(p.shownPID)", forType: .string) }
+            }
+        }
+    }
+}
+
+extension ProcessTable {
+    /// Rows, with an app's processes under a disclosure arrow, sorted the same way as the table.
+    @TableRowBuilder<ProcessRow> func content(_ order: [KeyPathComparator<ProcessRow>]) -> some TableRowContent<ProcessRow> {
+        ForEach(rows.sorted(using: order)) { r in
+            if let ms = r.members {
+                DisclosureTableRow(r) { ForEach(ms.sorted(using: order)) { TableRow($0) } }
+            } else {
+                TableRow(r)
             }
         }
     }
@@ -348,6 +367,9 @@ struct ProcessName: View {
         HStack(spacing: 7) {
             if let p = row.appPath ?? row.path { FileIcon(path: p, size: 16) } else { Image(systemName: "gearshape").frame(width: 16).foregroundStyle(.secondary) }
             Text(row.name).lineLimit(1)
+            if let n = row.members?.count {
+                Text("\(n) processes").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .help(row.path ?? row.name)
     }
