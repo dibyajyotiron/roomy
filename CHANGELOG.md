@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.4
+
+- Fan control is locked to Roomy. The fan helper (the one part of Roomy that runs as root) now sets a speed only
+  when the exact Roomy build you allowed asks for it, checked against that build's code signature at that moment;
+  anything else on your Mac is refused. Handing the fans back to macOS stays open to anyone, since it only undoes a
+  speed. After a Roomy update, Activity and the menu bar show "Update Fan Control…": one password and it's allowed
+  for the new build.
+- The fans never stay pinned without Roomy. When Roomy sets a speed, the helper starts a small watcher for that Roomy;
+  the moment Roomy exits, however it exits (quit, crash or force quit), the fans go back to macOS.
+- Fan-helper checks run on every build: on a test build with no root and no fans, they confirm other programs and
+  other builds are refused, and that a crash hands the fans back.
+
 ## 0.2.3
 
 - The round button's loader is a ring of liquid light around it, flowing while a clean runs and filling as a scan

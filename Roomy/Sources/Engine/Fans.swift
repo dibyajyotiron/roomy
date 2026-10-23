@@ -14,6 +14,8 @@ final class Fans {
     }
 
     static let helperPath = "/Library/PrivilegedHelperTools/app.roomy.fan"
+    /// The Roomy build allowed to set speeds (its cdhash), root-owned, written when you allow fan control.
+    static let allowPath = "/Library/PrivilegedHelperTools/app.roomy.fan.client"
     static var bundledHelper: String { Bundle.main.bundlePath + "/Contents/MacOS/roomy-fan" }
 
     var fans: [SMC.Fan] = []
@@ -49,7 +51,11 @@ final class Fans {
         guard let attrs = try? fm.attributesOfItem(atPath: Self.helperPath),
               (attrs[.ownerAccountID] as? NSNumber)?.intValue == 0,
               ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o4000 != 0 else { helper = .missing; return }
-        helper = fm.contentsEqual(atPath: Self.helperPath, andPath: Self.bundledHelper) ? .ready : .outdated
+        // Ready only when it's this build's helper and it lets this exact build set speeds; after an update it's allowed again once.
+        let allowed = (try? String(contentsOfFile: Self.allowPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowOwner = (try? fm.attributesOfItem(atPath: Self.allowPath))?[.ownerAccountID] as? NSNumber
+        helper = fm.contentsEqual(atPath: Self.helperPath, andPath: Self.bundledHelper) && allowOwner?.intValue == 0
+            && allowed != nil && allowed == CodeIdentity.ownCDHash() ? .ready : .outdated
     }
 
     func apply(_ p: Preset) async {
@@ -69,8 +75,11 @@ final class Fans {
     /// Installs roomy-fan as root (macOS asks for an administrator's password). The only thing it can do is set fan speed.
     func installHelper() async {
         busy = true; problem = nil
+        guard let me = CodeIdentity.ownCDHash(), CodeIdentity.isHash(me) else { busy = false; problem = "Roomy's signature couldn't be read, so fan control can't be allowed."; return }
         let src = Self.bundledHelper.replacingOccurrences(of: "'", with: "'\\''")
+        // The helper, and the one Roomy build it takes speeds from (hex only, so the command can't carry anything else).
         let cmd = "mkdir -p /Library/PrivilegedHelperTools && /usr/bin/install -o root -g wheel -m 4755 '\(src)' '\(Self.helperPath)'"
+            + " && /usr/bin/printf '%s\\n' '\(me)' > '\(Self.allowPath)' && /usr/sbin/chown root:wheel '\(Self.allowPath)' && /bin/chmod 644 '\(Self.allowPath)'"
         let ok = await Self.asAdmin(cmd, prompt: "Roomy wants to install a small helper that can only change your Mac's fan speed.")
         busy = false
         checkHelper()
@@ -80,7 +89,7 @@ final class Fans {
     func removeHelper() async {
         if preset != .auto { await apply(.auto) }
         busy = true
-        _ = await Self.asAdmin("/bin/rm -f '\(Self.helperPath)'", prompt: "Roomy wants to remove its fan helper.")
+        _ = await Self.asAdmin("/bin/rm -f '\(Self.helperPath)' '\(Self.allowPath)'", prompt: "Roomy wants to remove its fan helper.")
         busy = false
         checkHelper()
     }

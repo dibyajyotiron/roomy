@@ -93,7 +93,7 @@ ditto "$ROOT/Vendor/Sparkle/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle
 
 echo "› Fan helper"
 # roomy-fan is the only part that ever runs as root: you install it from Status, and it can only set fan speed.
-$SWIFTC -module-cache-path "$OUT/module-cache" $OPT -module-name RoomyFan -o "$APP/Contents/MacOS/roomy-fan" Roomy/Helper/main.swift Roomy/Sources/Engine/SMC.swift
+$SWIFTC -module-cache-path "$OUT/module-cache" $OPT -module-name RoomyFan -o "$APP/Contents/MacOS/roomy-fan" Roomy/Helper/main.swift Roomy/Sources/Engine/SMC.swift Roomy/Sources/Engine/CodeIdentity.swift
 
 echo "› Bundle"
 cat > "$APP/Contents/Info.plist" <<PLIST

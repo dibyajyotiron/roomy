@@ -9,3 +9,5 @@ swiftc -module-cache-path "$WORK/module-cache" -swift-version 5 -parse-as-librar
 python3 -I -B -m unittest discover -s Tests -p 'test_*.py'
 xcrun swiftc -module-cache-path "$WORK/module-cache" scripts/verify-release.swift -o "$WORK/verify"
 "$WORK/verify" --self-test
+
+sh Tests/fan/check-fan-helper.sh

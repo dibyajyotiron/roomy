@@ -39,8 +39,8 @@ targets:
       path: Resources/Info.plist
       properties:
         CFBundleDisplayName: Roomy
-        CFBundleShortVersionString: "0.2.3"
-        CFBundleVersion: "203"
+        CFBundleShortVersionString: "0.2.4"
+        CFBundleVersion: "204"
         LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "GPL-3.0. Cleans with Mole (GPL-3.0)."
@@ -63,6 +63,7 @@ targets:
     sources:
       - path: Helper
       - path: Sources/Engine/SMC.swift
+      - path: Sources/Engine/CodeIdentity.swift
     settings:
       base:
         PRODUCT_NAME: roomy-fan
