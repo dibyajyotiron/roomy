@@ -5,6 +5,7 @@ import Charts
 /// its charts, the numbers Activity Monitor shows (each explains itself on hover) and every process using it.
 struct ActivityView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @AppStorage("activityResource") private var resourceRaw = Resource.cpu.rawValue
     @State private var selection: Set<Int32> = []
     @State private var search = ""
@@ -40,17 +41,18 @@ struct ActivityView: View {
                         .buttonStyle(.glass).help("Open Apple's Activity Monitor")
                 }
             }
-            Live { cards }.padding(.horizontal, 28).padding(.bottom, 12)
+            Live { cards }.padding(.horizontal, 28).padding(.bottom, ws.short ? 8 : 12)
             if resource == .thermals {
                 ScrollView { ThermalsPanel().padding(.horizontal, 28).padding(.bottom, 24) }
             } else {
                 if resource == .memory {
                     // Memory: where it is and what would help, side by side, so the process list keeps its room.
-                    Live { MemoryPanels { freeUp } }.padding(.horizontal, 28).padding(.bottom, 12)
+                    Live { MemoryPanels { freeUp } }.padding(.horizontal, 28).padding(.bottom, ws.short ? 8 : 12)
                 } else {
                     Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
                 }
-                processes.padding(.horizontal, 28).padding(.bottom, 16)
+                // The list always keeps a few rows, however short the window.
+                processes.frame(minHeight: 150).padding(.horizontal, 28).padding(.bottom, 16)
             }
         }
         .onAppear { m.watchProcesses() }
@@ -89,7 +91,8 @@ struct ActivityView: View {
                  caption: m.fans.hasFans ? "\(Int(m.fans.rpm).formatted()) RPM fans" : ThermalsPanel.stateLabel(m.thermal.state),
                  series: m.tempHistory.map(\.1), max: nil, tint: ThermalsPanel.color(m.thermal.cpu ?? 0))
         }
-        .frame(height: 104)
+        // Compact width drops each card's caption; a short window drops the sparkline too.
+        .frame(height: ws.short ? 66 : ws.compact ? 86 : 104)
     }
 
     func card(_ r: Resource, value: String, unit: String, caption: String, series: [Double], max: Double?, tint: Color? = nil) -> some View {
@@ -98,7 +101,7 @@ struct ActivityView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: r.symbol).font(.system(size: 11, weight: .semibold))
-                    Text(r.title).font(.system(size: 12, weight: .semibold))
+                    Text(r.title).font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
@@ -106,11 +109,12 @@ struct ActivityView: View {
                     Text(value).font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
                     Text(unit).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
-                Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                Spark(values: series, max: max, tint: tint ?? Palette.accent).frame(height: 18)
+                if !ws.compact { Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
+                if !ws.short { Spark(values: series, max: max, tint: tint ?? Palette.accent).frame(height: 18) }
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, ws.compact ? 10 : 12).padding(.vertical, ws.short ? 8 : 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .help(caption)
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -232,7 +236,7 @@ struct ActivityView: View {
                             .disabled(!p.mine).help(p.mine ? "Quit \(p.name)" : "Belongs to macOS or another user, so it can't be quit from here.")
                     }
                 }
-                Text(resource.tableNote).font(.system(size: 11)).foregroundStyle(.secondary)
+                if !ws.compact { Text(resource.tableNote).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
             }
             .padding(.bottom, 8)
             Live {
@@ -690,18 +694,13 @@ enum Explain {
 struct MemoryPanels<FreeUp: View>: View {
     @ViewBuilder var freeUp: FreeUp
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 12) {
-                MemoryOverview(freeUp: { freeUp }).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                MemoryAdviceCard().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(minWidth: 720)
-            VStack(spacing: 12) {
-                MemoryOverview(freeUp: { freeUp })
-                MemoryAdviceCard()
-            }
+        // Always side by side: stacking them pushed the process list off a laptop screen. Narrow and short windows
+        // tighten each panel instead (see `dense`).
+        HStack(alignment: .top, spacing: 12) {
+            MemoryOverview(freeUp: { freeUp }).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            MemoryAdviceCard().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -709,6 +708,7 @@ struct MemoryPanels<FreeUp: View>: View {
 /// up to the whole bar. Swap is a hatched piece outside the bar, so "full, and spilling onto the SSD" reads at a glance.
 struct MemoryOverview<FreeUp: View>: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @ViewBuilder var freeUp: FreeUp
 
     var body: some View {
@@ -722,18 +722,18 @@ struct MemoryOverview<FreeUp: View>: View {
                      MemoryPart(name: "Free", bytes: m.free, color: Color.primary.opacity(0.08), help: "Memory nothing is using right now.")]
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Where your \(Fmt.bytes(m.total)) is").font(.system(size: 13, weight: .semibold))
+                Text("Where your \(Fmt.bytes(m.total)) is").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 8)
                 Explained(Explain.pressure) {
                     HStack(spacing: 6) {
                         Circle().fill(tint).frame(width: 7, height: 7)
                         Text(["Pressure normal", "Pressure rising", "Pressure high"][level]).font(.system(size: 11.5, weight: .medium)).foregroundStyle(tint)
-                        Spark(values: model.monitor.history.map(\.memory.pressurePercent), max: 100, tint: tint).frame(width: 64, height: 16)
+                        if !ws.compact { Spark(values: model.monitor.history.map(\.memory.pressurePercent), max: 100, tint: tint).frame(width: 64, height: 16) }
                     }
                 }
             }
             MemoryMap(parts: parts, total: m.total, swap: m.swapUsed)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 10, alignment: .leading)], alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: ws.compact ? 92 : 104), spacing: 10, alignment: .leading)], alignment: .leading, spacing: ws.short ? 6 : 8) {
                 ForEach(parts) { p in
                     Explained(p.help) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -760,13 +760,14 @@ struct MemoryOverview<FreeUp: View>: View {
             Spacer(minLength: 0)
             HStack(spacing: 8) {
                 Explained(Explain.used) {
-                    Text("\(Fmt.bytes(m.used)) in use, as Activity Monitor counts it").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(ws.compact ? "\(Fmt.bytes(m.used)) in use" : "\(Fmt.bytes(m.used)) in use, as Activity Monitor counts it")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 freeUp
             }
         }
-        .padding(14)
+        .padding(ws.short ? 12 : 14)
         .glass(14)
     }
 }
@@ -825,6 +826,7 @@ struct Hatch: View {
 /// squeezed most (as a bar of how much of each is squeezed), and the most useful tip. From live readings only.
 struct MemoryAdviceCard: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     var body: some View {
         let a = model.monitor.memoryAdvice
         let total = model.monitor.sample.memory.total
@@ -840,7 +842,7 @@ struct MemoryAdviceCard: View {
             .help(a.summary)
             if !a.idle.isEmpty {
                 section("Open but not in use", trailing: "frees about \(Fmt.bytes(a.idleTotal))") {
-                    ForEach(a.idle.prefix(3)) { i in
+                    ForEach(a.idle.prefix(ws.short ? 2 : 3)) { i in
                         HStack(spacing: 8) {
                             FileIcon(path: i.path, size: 18)
                             VStack(alignment: .leading, spacing: 0) {
@@ -857,12 +859,12 @@ struct MemoryAdviceCard: View {
             }
             if !a.pushedOut.isEmpty {
                 section("Squeezed or on the SSD", trailing: nil) {
-                    ForEach(a.pushedOut.prefix(a.idle.isEmpty ? 4 : 2)) { p in
+                    ForEach(a.pushedOut.prefix(a.idle.isEmpty ? (ws.short ? 3 : 4) : 2)) { p in
                         HStack(spacing: 8) {
                             if let path = p.path { FileIcon(path: path, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
                             Text(p.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
                             Spacer(minLength: 6)
-                            SqueezeBar(share: Double(p.compressed) / Double(max(1, p.footprint))).frame(width: 64, height: 6)
+                            if !ws.compact { SqueezeBar(share: Double(p.compressed) / Double(max(1, p.footprint))).frame(width: 64, height: 6) }
                             Text("\(Fmt.bytes(p.compressed)) of \(Fmt.bytes(p.footprint))").font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.secondary)
                                 .frame(minWidth: 92, alignment: .trailing)
                         }
@@ -870,7 +872,7 @@ struct MemoryAdviceCard: View {
                     }
                 }
             }
-            if let tip = a.tips.first {
+            if let tip = a.tips.first, !ws.short {
                 Label { Text(tip).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true) } icon: {
                     Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Palette.accent)
                 }
@@ -878,7 +880,7 @@ struct MemoryAdviceCard: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(ws.short ? 12 : 14)
         .glass(14)
     }
 

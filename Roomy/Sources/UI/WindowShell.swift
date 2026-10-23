@@ -341,10 +341,31 @@ struct DiskDial: View {
 /// selection is a raised pill that slides between rows.
 struct AreaList: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     var area: Area
     @Namespace private var ns
 
     var body: some View {
+        if ws.compact { compactList } else { fullList }
+    }
+
+    /// Compact width: the modules as a column of their icons, named (with their count) on hover like the rail, so the
+    /// screen keeps about 170pt more for its content.
+    var compactList: some View {
+        VStack(spacing: 4) {
+            ForEach(Array(area.routes.enumerated()), id: \.element) { i, r in
+                CompactAreaRow(route: r, selected: model.route == r, badge: model.badge(for: r), ns: ns) {
+                    withAnimation(.smooth(duration: 0.3)) { model.route = r }
+                }
+                .modifier(RiseIn(delay: Double(i) * 0.03))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 64).padding(.bottom, 16)
+        .frame(width: 66)
+    }
+
+    var fullList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(area.title).font(.system(size: 22, weight: .bold)).tracking(-0.4)
             Text(area.blurb).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -455,5 +476,40 @@ struct RailUpdateButton: View {
         .help(busy ? tip : "Download Roomy \(version); Roomy then quits, installs it and reopens.")
         .accessibilityLabel(busy ? tip : "Update Roomy to \(version)")
         .transition(.scale(scale: 0.6).combined(with: .opacity))
+    }
+}
+
+/// One module in the compact area list: its liquid icon on the selection pill, its name and count on hover.
+struct CompactAreaRow: View {
+    var route: Route
+    var selected: Bool
+    var badge: String?
+    var ns: Namespace.ID
+    var action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            LiquidIcon(route: route, size: 30, interactive: false)
+                .frame(width: 46, height: 46)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Palette.surface)
+                            .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).strokeBorder(Palette.surfaceLine, lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                            .matchedGeometryEffect(id: "sel", in: ns)
+                    } else if hover {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Color.primary.opacity(0.05))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.14)) { hover = h } }
+        .overlay(alignment: .leading) {
+            if hover { RailTip(text: badge.map { "\(route.title) · \($0)" } ?? route.title).fixedSize().offset(x: 54).transition(.opacity.combined(with: .offset(x: -5))) }
+        }
+        .zIndex(hover ? 1 : 0)
+        .accessibilityLabel(badge.map { "\(route.title), \($0)" } ?? route.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

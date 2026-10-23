@@ -7,6 +7,15 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     var body: some View {
+        GeometryReader { g in
+            content.environment(\.windowSize, WindowSize(width: g.size.width, height: g.size.height))
+        }
+        .ignoresSafeArea()
+        .frame(minWidth: 940, minHeight: 600)
+        .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+    }
+
+    @ViewBuilder var content: some View {
         let area = Area.of(model.route)
         ZStack(alignment: .topLeading) {
             AreaGround(area: area, theme: model.theme)
@@ -56,8 +65,7 @@ struct RootView: View {
                 ToolbarItem { RescanButton(route: model.route) }
             }
         }
-        .frame(minWidth: 1000, minHeight: 660)
-        .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+
     }
 
     /// Everything the orb shows on a module screen, so it updates only when one of these changes.

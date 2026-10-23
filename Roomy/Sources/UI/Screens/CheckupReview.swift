@@ -37,7 +37,7 @@ struct CheckupReview: View {
             }
             footer
         }
-        .frame(minWidth: 820, idealWidth: 900, minHeight: 600, idealHeight: 680)
+        .frame(minWidth: 780, idealWidth: 900, minHeight: 520, idealHeight: 680)
         .presentationBackground { AreaGround(area: .cleanup) }
     }
 
