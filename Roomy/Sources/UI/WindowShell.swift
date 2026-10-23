@@ -172,8 +172,10 @@ struct IconRail: View {
                 RailItem(area: a, selected: a == current, news: model.areaHasNews(a)) { go(a) }
             }
             Spacer(minLength: 12)
-            DiskDial()
+            // Above the disk dial: the rail is anchored at the bottom, so the button appears in the free space and the
+            // dial and Settings never move.
             RailUpdateButton()
+            DiskDial()
             RailItem(area: .settings, selected: current == .settings, news: false) { go(.settings) }
         }
         .padding(.vertical, 12)
@@ -404,7 +406,7 @@ struct WindowReader: NSViewRepresentable {
     }
 }
 
-/// A new Roomy, as a solid round button in the rail just above Settings. One click downloads it (a ring around the
+/// A new Roomy, as a solid round button in the rail just above the disk dial. One click downloads it (a ring around the
 /// button fills) and Roomy quits, installs it and reopens. Nothing shows while Roomy is up to date.
 struct RailUpdateButton: View {
     @State private var updater = AppUpdater.shared

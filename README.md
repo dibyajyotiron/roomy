@@ -47,7 +47,7 @@ It installs the latest Roomy in your Applications folder and opens it. It downlo
 
 **Signed, notarized download: coming soon.** Until then, a `.pkg` downloaded from [Releases](https://github.com/dibyajyotiron/roomy/releases/latest) in a browser is blocked by macOS the first time. To open it anyway: click **Done**, then go to **System Settings › Privacy & Security**, scroll down and click **Open Anyway**, enter your password and click **Open**. (Right-click › Open no longer works for this on macOS 15 and later.) The Terminal install above doesn't need any of that.
 
-**Updates.** When there's a new version, a round download button appears in the sidebar, just above Settings (Roomy checks every 10 minutes, and Settings has **Check Now**). Click it: Roomy downloads the update, quits, installs it and reopens. Nothing downloads until you click. Updates are signed, and Roomy installs only ones signed with its own key.
+**Updates.** When there's a new version, a round download button appears in the sidebar, just above the disk (Roomy checks every 10 minutes, and Settings has **Check Now**). Click it: Roomy downloads the update, quits, installs it and reopens. Nothing downloads until you click. Updates are signed, and Roomy installs only ones signed with its own key.
 
 **First run.** Roomy asks for **Full Disk Access** so a scan can see caches in every folder without a question per folder (see [Permissions](#permissions)). **Safe mode** is on until you turn it off in Settings: every clean shows what it would remove and removes nothing.
 

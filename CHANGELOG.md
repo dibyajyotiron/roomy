@@ -2,8 +2,8 @@
 
 ## 0.2.4
 
-- Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above
-  Settings. Click it and a ring fills while it downloads, then Roomy installs it and reopens.
+- Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above the
+  disk. Click it and a ring fills while it downloads, then Roomy installs it and reopens.
 - Memory advice on Activity's Memory view: why memory is tight (how much is compressed or on the SSD), the apps macOS
   has squeezed most, apps that are open but not in use with what quitting each frees (and a Quit button), and tips
   for web tabs and apps that run virtual machines. The menu bar points to it when idle apps hold memory.
