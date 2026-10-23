@@ -42,6 +42,7 @@ struct ActivityView: View {
                 ScrollView { ThermalsPanel().padding(.horizontal, 28).padding(.bottom, 24) }
             } else {
                 Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
+                if resource == .memory { Live { MemoryAdviceCard() }.padding(.horizontal, 28).padding(.bottom, 12) }
                 processes.padding(.horizontal, 28).padding(.bottom, 16)
             }
         }
@@ -656,4 +657,73 @@ enum Explain {
     static let sent = "Data leaving this Mac per second."
     static let packets = "Network packets per second. Many small packets with little data is typical for video calls and games."
     static let thermalState = "macOS's own verdict on heat. When it's serious or critical, macOS slows the processor to cool down; Activity Monitor doesn't show this."
+}
+
+/// Why memory is where it is and what would help: apps open but not in use (with what quitting each frees), apps whose
+/// memory macOS has mostly squeezed or moved to the SSD, and tips for the biggest kinds of use. All from live readings.
+struct MemoryAdviceCard: View {
+    @Environment(AppModel.self) var model
+    var body: some View {
+        let a = model.monitor.memoryAdvice
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: a.tight ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(a.tight ? Palette.warn : Palette.ok).font(.system(size: 13))
+                Text(a.summary).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+            }
+            if !a.idle.isEmpty || !a.pushedOut.isEmpty {
+                HStack(alignment: .top, spacing: 18) {
+                    if !a.idle.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Open but not in use · quitting frees about \(Fmt.bytes(a.idleTotal))").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                            ForEach(a.idle.prefix(5)) { i in
+                                HStack(spacing: 8) {
+                                    FileIcon(path: i.path, size: 18)
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        Text(i.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                        Text(i.lastUsed).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 6)
+                                    Text(Fmt.bytes(i.footprint)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                                    Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
+                                        .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if !a.pushedOut.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Squeezed or on the SSD").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                .help("Memory these apps hold but haven't touched lately, so macOS compressed it or moved it to swap. It still counts against your Mac until the app lets go of it or quits.")
+                            ForEach(a.pushedOut) { p in
+                                HStack(spacing: 8) {
+                                    if let path = p.path { FileIcon(path: path, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
+                                    Text(p.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                    Spacer(minLength: 6)
+                                    Text("\(Fmt.bytes(p.compressed)) of \(Fmt.bytes(p.footprint))").font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            ForEach(a.tips, id: \.self) { t in
+                Label { Text(t).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } icon: {
+                    Image(systemName: "lightbulb").font(.system(size: 10.5)).foregroundStyle(Palette.accent)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glass(14)
+    }
+
+    func quit(_ path: String, _ name: String) {
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }
+        guard !apps.isEmpty else { return }
+        apps.forEach { $0.terminate() }
+        model.flash("Asked \(name) to quit.")
+    }
 }

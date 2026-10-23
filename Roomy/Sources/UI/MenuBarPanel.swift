@@ -392,7 +392,8 @@ private struct TopApps: View {
         let apps = Array(all.sorted { byCPU ? $0.cpu > $1.cpu : $0.mem > $1.mem }.prefix(5))
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Text("Using the most").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Apps using the most").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .help("Each app with all its processes together (helpers, renderers, web pages), so one app here can be several rows in Activity Monitor.")
                 Spacer()
                 sortButton("Memory", on: !byCPU).frame(width: 72, alignment: .trailing)
                 sortButton("CPU", on: byCPU).frame(width: 52, alignment: .trailing)
@@ -408,6 +409,9 @@ private struct TopApps: View {
                 HStack(spacing: 8) {
                     if let p = a.path { FileIcon(path: p, size: 16) } else { Image(systemName: "gearshape").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 16) }
                     Text(a.name.hasPrefix("com.apple.WebKit") ? "Web pages" : a.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        .help(a.processes > 1 ? "\(a.processes) processes together" : "1 process")
+                    if a.processes > 1 { Text("\(a.processes)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
+                        .padding(.horizontal, 4).padding(.vertical, 1).background(Capsule().fill(Color.primary.opacity(0.07))) }
                     Spacer(minLength: 6)
                     Text(Fmt.bytes(a.mem)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).frame(width: 72, alignment: .trailing)
                     Text(String(format: "%.1f", cpu)).font(.system(size: 12, weight: cpu >= 80 ? .semibold : .regular)).monospacedDigit()
@@ -423,7 +427,17 @@ private struct TopApps: View {
                 }
                 .frame(height: 24)
             }
-            if !byCPU && !Demo.on { MemoryBreakdown(m: model.monitor.sample.memory).padding(.top, 6) }
+            if !byCPU && !Demo.on {
+                MemoryBreakdown(m: model.monitor.sample.memory).padding(.top, 6)
+                let advice = model.monitor.memoryAdvice
+                if !advice.idle.isEmpty {
+                    Button(action: { UserDefaults.standard.set(Resource.memory.rawValue, forKey: "activityResource"); open() }) {
+                        Text("\(advice.idle.count) open app\(advice.idle.count == 1 ? "" : "s") not in use hold \(Fmt.bytes(advice.idleTotal)) · Review")
+                            .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain).padding(.top, 4).help("Open Activity's memory advice")
+                }
+            }
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.fill))

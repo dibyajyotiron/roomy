@@ -55,7 +55,6 @@ struct RootView: View {
             if AppModel.scanPart(for: model.route) != nil, model.route != .care, model.footer?.route == model.route {
                 ToolbarItem { RescanButton(route: model.route) }
             }
-            ToolbarItem { UpdatePill() }
         }
         .frame(minWidth: 1000, minHeight: 660)
         .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
@@ -101,21 +100,6 @@ struct RootView: View {
         reduceMotion ? .opacity
             : .asymmetric(insertion: AnyTransition(.blurReplace).combined(with: .scale(scale: 0.985)),
                           removal: .opacity.animation(.easeOut(duration: 0.12)))
-    }
-}
-
-/// A new Roomy, as a small glass capsule in the toolbar. One click downloads it, then Roomy reopens updated.
-struct UpdatePill: View {
-    @State private var updater = AppUpdater.shared
-    var body: some View {
-        switch updater.state {
-        case .available(let v):
-            Button { updater.update() } label: { Label("Update to \(v)", systemImage: "arrow.down.circle") }
-                .help("Download Roomy \(v), then Roomy quits, installs it and reopens.")
-        case .downloading(let v), .ready(let v):
-            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Updating to \(v)…") }
-        default: EmptyView()
-        }
     }
 }
 

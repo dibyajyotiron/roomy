@@ -235,6 +235,8 @@ struct ProcessRow: Identifiable, Hashable {
     var cpuTime = ""
     /// Physical footprint: the memory macOS charges to it, Activity Monitor's "Memory" column.
     var memory: Int64 = 0
+    /// How much of that footprint macOS has compressed or moved to swap (top's CMPRS): memory it isn't actively using.
+    var compressed: Int64 = 0
     /// macOS's energy impact score, the same number as Activity Monitor's Energy tab.
     var energy = 0.0
     var threads = 0
@@ -272,7 +274,7 @@ final class ProcessFeed: @unchecked Sendable {
         skipFirst = true
         // Through a pseudo-terminal, so top hands over each sample as soon as it's written instead of in 4 KB chunks.
         top = launch("/usr/bin/script", ["-q", "/dev/null", "/usr/bin/top", "-l", "0", "-s", String(Self.interval), "-o", "cpu", "-n", "300",
-                                         "-stats", "pid,command,cpu,mem,power,threads,ports,user,state,time"]) { [weak self] s in self?.topChunk(s) }
+                                         "-stats", "pid,command,cpu,mem,cmprs,power,threads,ports,user,state,time"]) { [weak self] s in self?.topChunk(s) }
         pollNetwork()
     }
 
@@ -375,17 +377,18 @@ final class ProcessFeed: @unchecked Sendable {
             if line.hasPrefix("PID") { inTable = true; continue }
             guard inTable else { continue }
             let t = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-            guard t.count >= 10, let pid = Int32(t[0]) else { continue }
-            let tail = Array(t.suffix(8))
-            let command = t[1..<(t.count - 8)].joined(separator: " ")
-            var row = ProcessRow(pid: pid, name: command, user: tail[5] == "(null)" ? "system" : tail[5])
+            guard t.count >= 11, let pid = Int32(t[0]) else { continue }
+            let tail = Array(t.suffix(9))
+            let command = t[1..<(t.count - 9)].joined(separator: " ")
+            var row = ProcessRow(pid: pid, name: command, user: tail[6] == "(null)" ? "system" : tail[6])
             row.cpu = Double(tail[0]) ?? 0
             row.memory = Self.bytes(tail[1])
-            row.energy = Double(tail[2]) ?? 0
-            row.threads = Int(tail[3].split(separator: "/").first ?? "") ?? 0
-            row.ports = Int(tail[4].trimmingCharacters(in: CharacterSet(charactersIn: "+-*"))) ?? 0
-            row.state = tail[6]
-            row.cpuTime = tail[7]
+            row.compressed = Self.bytes(tail[2])
+            row.energy = Double(tail[3]) ?? 0
+            row.threads = Int(tail[4].split(separator: "/").first ?? "") ?? 0
+            row.ports = Int(tail[5].trimmingCharacters(in: CharacterSet(charactersIn: "+-*"))) ?? 0
+            row.state = tail[7]
+            row.cpuTime = tail[8]
             if let n = netRates[pid] { row.netIn = n.0; row.netOut = n.1 }
             if let p = paths[pid] {
                 row.path = p

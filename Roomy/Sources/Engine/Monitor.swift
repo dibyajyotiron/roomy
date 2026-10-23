@@ -7,7 +7,11 @@ import AppKit
 /// Mole's status adds the health score.
 @MainActor @Observable
 final class Monitor {
-    struct AppUsage: Identifiable, Hashable { var id: String { name }; var name: String; var path: String?; var cpu: Double; var mem: Int64; var processes: Int }
+    struct AppUsage: Identifiable, Hashable {
+        var id: String { name }; var name: String; var path: String?; var cpu: Double; var mem: Int64; var processes: Int
+        /// How much of `mem` macOS has compressed or swapped out (only while the process feed runs).
+        var compressed: Int64 = 0
+    }
 
     var sample = SystemSample()
     var history: [SystemSample] = []
@@ -49,10 +53,44 @@ final class Monitor {
         }
     }
 
+    /// When Roomy started watching, and when you last switched to each app (by bundle path) since then.
+    let watchingSince = Date()
+    @ObservationIgnored private(set) var lastActive: [String: Date] = [:]
+    /// Each app's CPU (share of one core) averaged over roughly the last five minutes, by app name.
+    @ObservationIgnored private(set) var recentCPU: [String: Double] = [:]
+    @ObservationIgnored private var recentAt: Date?
+
     init() {
         feed.onUpdate = { [weak self] rows, procs, threads in
             MainActor.assumeIsolated { self?.receive(rows, procs, threads) }
         }
+        if let p = NSWorkspace.shared.frontmostApplication?.bundleURL?.path { lastActive[p] = Date() }
+        NotificationCenter.default.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared, queue: .main) { [weak self] n in
+            let path = (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleURL?.path
+            MainActor.assumeIsolated { if let path { self?.lastActive[path] = Date() } }
+        }
+    }
+
+    /// What's filling memory and what would help (see MemoryAdvice), from the latest readings.
+    var memoryAdvice: MemoryAdvice {
+        let ws = NSWorkspace.shared
+        let running = ws.runningApplications.compactMap { a in
+            a.bundleURL.map { MemoryAdvice.Running(name: a.localizedName ?? "", path: $0.path, regular: a.activationPolicy == .regular) }
+        }
+        return MemoryAdvice.make(memory: sample.memory, apps: apps, rows: processes, running: running,
+                                 frontmost: ws.frontmostApplication?.bundleURL?.path, lastActive: lastActive,
+                                 watchingSince: watchingSince, recentCPU: recentCPU)
+    }
+
+    /// Folds the latest per-app CPU into a five-minute average, weighted by the time since the last reading.
+    private func noteCPU(_ apps: [AppUsage]) {
+        let now = Date(), ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
+        let dt = recentAt.map { now.timeIntervalSince($0) } ?? 0
+        recentAt = now
+        let k = dt > 0 ? min(1, dt / 300) : 1
+        var next: [String: Double] = [:]
+        for a in apps { let c = a.cpu * ncpu; next[a.name] = recentCPU[a.name].map { $0 + (c - $0) * k } ?? c }
+        recentCPU = next
     }
 
     func watch() {
@@ -101,7 +139,7 @@ final class Monitor {
             if temps.count > Self.historyLength { temps.removeFirst(temps.count - Self.historyLength) }
         }
         sample = s; history = h; thermal = th; tempHistory = temps; battery = bat
-        if let usage { apps = usage }
+        if let usage { apps = usage; noteCPU(usage) }
         if let status { self.status = status }
         fans.refresh()
         lastUpdate = Date()
@@ -132,9 +170,10 @@ final class Monitor {
         for r in rows {
             let key = r.appPath.map { (Paths.name($0) as NSString).deletingPathExtension } ?? r.name
             var a = grouped[key] ?? AppUsage(name: key, path: r.appPath, cpu: 0, mem: 0, processes: 0)
-            a.cpu += r.cpu / ncpu; a.mem += r.memory; a.processes += 1
+            a.cpu += r.cpu / ncpu; a.mem += r.memory; a.compressed += r.compressed; a.processes += 1
             grouped[key] = a
         }
+        noteCPU(Array(grouped.values))
         apps = grouped.values.sorted { $0.mem > $1.mem }.prefix(30).map { var x = $0; x.cpu = (x.cpu * 10).rounded() / 10; return x }
     }
 

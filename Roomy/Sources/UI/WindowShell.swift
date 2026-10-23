@@ -173,6 +173,7 @@ struct IconRail: View {
             }
             Spacer(minLength: 12)
             DiskDial()
+            RailUpdateButton()
             RailItem(area: .settings, selected: current == .settings, news: false) { go(.settings) }
         }
         .padding(.vertical, 12)
@@ -400,5 +401,57 @@ struct WindowReader: NSViewRepresentable {
             super.viewDidMoveToWindow()
             if let w = window { onWindow?(w) }
         }
+    }
+}
+
+/// A new Roomy, as a solid round button in the rail just above Settings. One click downloads it (a ring around the
+/// button fills) and Roomy quits, installs it and reopens. Nothing shows while Roomy is up to date.
+struct RailUpdateButton: View {
+    @State private var updater = AppUpdater.shared
+    @State private var hover = false
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+
+    var body: some View {
+        switch updater.state {
+        case .available(let v): button(v, busy: false, tip: "Update to Roomy \(v)")
+        case .downloading(let v): button(v, busy: true, tip: updater.progress.map { "Downloading Roomy \(v) · \(Int($0 * 100))%" } ?? "Downloading Roomy \(v)")
+        case .ready(let v): button(v, busy: true, tip: "Installing Roomy \(v)…")
+        default: EmptyView()
+        }
+    }
+
+    func button(_ version: String, busy: Bool, tip: String) -> some View {
+        Button { updater.update() } label: {
+            ZStack {
+                Circle().fill(Palette.accent)
+                    .shadow(color: Palette.accent.opacity(0.45), radius: hover && !busy ? 8 : 5, y: 2)
+                Image(systemName: "square.and.arrow.down").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    .offset(y: -1)
+                if busy {
+                    Circle().stroke(Palette.accent.opacity(0.2), lineWidth: 2.5).padding(-5)
+                    TimelineView(.animation(paused: updater.progress != nil || reduceMotion)) { tl in
+                        let p = updater.progress
+                        let spin = p == nil && !reduceMotion ? tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.2) / 1.2 * 360 : 0
+                        Circle().trim(from: 0, to: p.map { max(0.03, $0) } ?? 0.28)
+                            .stroke(Palette.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(spin - 90)).padding(-5)
+                            .animation(p == nil ? nil : .smooth(duration: 0.5), value: p)
+                    }
+                }
+            }
+            .frame(width: 34, height: 34)
+            .scaleEffect(hover && !busy ? 1.06 : 1)
+            .frame(width: 46, height: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.14)) { hover = h } }
+        .overlay(alignment: .leading) {
+            if hover { RailTip(text: tip).fixedSize().offset(x: 54).transition(.opacity.combined(with: .offset(x: -5))) }
+        }
+        .zIndex(hover ? 1 : 0)
+        .help(busy ? tip : "Download Roomy \(version); Roomy then quits, installs it and reopens.")
+        .accessibilityLabel(busy ? tip : "Update Roomy to \(version)")
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
     }
 }

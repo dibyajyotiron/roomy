@@ -129,7 +129,7 @@ cat > "$WORK/resources/welcome.html" <<HTML
 <h2 style="margin-top:0">Roomy $VERSION</h2>
 <p>Make room on your Mac, and review Mole's findings before you clean.</p>
 <p>This installs Roomy in your Applications folder. Mole, the cleaning engine Roomy uses, comes with it, so there's nothing else to install.</p>
-<p>Roomy keeps itself up to date: when a new version is out, an Update button appears in the toolbar. Click it and Roomy downloads the update and reopens updated.</p>
+<p>Roomy keeps itself up to date: when a new version is out, a round download button appears in the sidebar, just above Settings. Click it and Roomy downloads the update and reopens updated.</p>
 <p>Free software under the GNU General Public License v3.0.</p>
 </body></html>
 HTML

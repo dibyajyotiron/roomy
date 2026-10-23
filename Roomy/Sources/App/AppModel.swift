@@ -48,7 +48,7 @@ enum Route: String, CaseIterable, Identifiable, Codable {
         ("Cleanup", [.systemJunk, .userCache, .developer, .artifacts, .aiCare, .mail, .trash, .systemData]),
         ("Applications", [.uninstaller, .updates, .leftovers, .startup, .slimming]),
         ("Your Files", [.lens, .large, .dups, .photos, .installers]),
-        ("Health", [.protection, .status, .maintenance, .history]),
+        ("Health", [.status, .protection, .maintenance, .history]),
     ]
 }
 

@@ -2,6 +2,18 @@
 
 ## 0.2.4
 
+- Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above
+  Settings. Click it and a ring fills while it downloads, then Roomy installs it and reopens.
+- Memory advice on Activity's Memory view: why memory is tight (how much is compressed or on the SSD), the apps macOS
+  has squeezed most, apps that are open but not in use with what quitting each frees (and a Quit button), and tips
+  for web tabs and apps that run virtual machines. The menu bar points to it when idle apps hold memory.
+- App memory matches Activity Monitor: the menu bar measures each app's footprint, not its resident memory, so an app
+  running a virtual machine (OrbStack) shows its real size. The list says it's by app, with each app's process count,
+  and a bar under it shows where all your memory is (apps, compressed, macOS, cached files, free), which adds up to
+  your RAM.
+- Fixed: choosing Auto after Cool or Max now really hands the fans back to macOS. Roomy used to clear only the
+  override, leaving the fans held at their last speed; fans left stuck that way are reset too.
+- Activity is first in Health, then Protection.
 - Fan control is locked to Roomy. The fan helper (the one part of Roomy that runs as root) now sets a speed only
   when the exact Roomy build you allowed asks for it, checked against that build's code signature at that moment;
   anything else on your Mac is refused. Handing the fans back to macOS stays open to anyone, since it only undoes a
