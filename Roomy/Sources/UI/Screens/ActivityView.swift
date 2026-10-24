@@ -690,7 +690,7 @@ enum Explain {
 }
 
 /// Activity's Memory view: two panels side by side, the same height. Left, where the Mac's memory is; right, what
-/// would help. They stack when the window is too narrow for both.
+/// would help. Their height depends on the window only, never on the readings: both lay out a fixed set of lines.
 struct MemoryPanels<FreeUp: View>: View {
     @ViewBuilder var freeUp: FreeUp
     var body: some View {
@@ -745,14 +745,15 @@ struct MemoryOverview<FreeUp: View>: View {
                         }
                     }
                 }
-                if m.swapUsed > 0 {
-                    Explained(Explain.swap) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Hatch(color: Palette.bad).frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2.5)).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("On the SSD").font(.system(size: 11)).foregroundStyle(.secondary)
-                                Text(Fmt.bytes(m.swapUsed)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                            }
+                // Always listed, "None" without swap: swap coming and going mustn't add or drop a legend row.
+                Explained(Explain.swap) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Hatch(color: Palette.bad).frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2.5)).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                            .opacity(m.swapUsed > 0 ? 1 : 0.4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("On the SSD").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(m.swapUsed > 0 ? Fmt.bytes(m.swapUsed) : "None").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(m.swapUsed > 0 ? .primary : .secondary)
                         }
                     }
                 }
@@ -822,75 +823,91 @@ struct Hatch: View {
     }
 }
 
-/// What would help: a one-line verdict, apps open but not in use (with what quitting each frees), the apps macOS has
-/// squeezed most (as a bar of how much of each is squeezed), and the most useful tip. From live readings only.
+/// What would help: a one-line verdict, then the apps worth acting on, one line each: open but idle (with Quit), then
+/// the ones macOS has packed away most of. The card is always the same height, whatever the readings: a fixed number of
+/// rows and one tip line, reserved even when empty, so the panels never jump as memory changes. From live readings only.
 struct MemoryAdviceCard: View {
     @Environment(AppModel.self) var model
     @Environment(\.windowSize) var ws
+    static let rowHeight: CGFloat = 26
+    var slots: Int { ws.short ? 3 : 4 }
+
+    enum Row: Identifiable {
+        case idle(MemoryAdvice.IdleApp)
+        case packed(MemoryAdvice.PushedOut)
+        var id: String { switch self { case .idle(let i): "idle " + i.id; case .packed(let p): "packed " + p.id } }
+    }
+
     var body: some View {
         let a = model.monitor.memoryAdvice
         let total = model.monitor.sample.memory.total
-        VStack(alignment: .leading, spacing: 10) {
+        let idlePaths = Set(a.idle.map(\.path))
+        let rows = (a.idle.map(Row.idle) + a.pushedOut.filter { $0.path.map { !idlePaths.contains($0) } ?? true }.map(Row.packed)).prefix(slots)
+        VStack(alignment: .leading, spacing: ws.short ? 8 : 10) {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 // Worded to agree with the pressure shown beside it: "tight" only when macOS itself says so.
                 Image(systemName: a.pressured ? "exclamationmark.triangle.fill" : a.tight ? "arrow.down.right.and.arrow.up.left.circle.fill" : "checkmark.circle.fill")
                     .font(.system(size: 12)).foregroundStyle(a.pressured ? Palette.warn : a.tight ? Palette.accent : Palette.ok)
-                Text(a.pressured ? (a.wanted > total ? "Open apps want \(Fmt.bytes(a.wanted)) on a \(Fmt.bytes(total)) Mac" : "Memory is tight")
-                     : a.tight ? "Memory is full, and macOS is coping by squeezing what apps aren't using" : "Memory is fine")
-                    .font(.system(size: 13, weight: .semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text(a.pressured ? "Memory is tight" : a.tight ? "Memory is full but coping" : "Memory is fine")
+                    .font(.system(size: 13, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                Spacer(minLength: 8)
+                if a.tight, a.wanted > total {
+                    Text("Open apps want \(Fmt.bytes(a.wanted)) of \(Fmt.bytes(total))").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                } else if a.idleTotal > 0 {
+                    Text("Quitting idle apps frees about \(Fmt.bytes(a.idleTotal))").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             .help(a.summary)
-            if !a.idle.isEmpty {
-                section("Open but not in use", trailing: "frees about \(Fmt.bytes(a.idleTotal))") {
-                    ForEach(a.idle.prefix(ws.short ? 2 : 3)) { i in
-                        HStack(spacing: 8) {
-                            FileIcon(path: i.path, size: 18)
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(i.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(i.lastUsed).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            Spacer(minLength: 6)
-                            Text(Fmt.bytes(i.footprint)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
-                            Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
-                                .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                if rows.isEmpty {
+                    Text(a.pressured ? "No app is idle enough to quit. Close windows and tabs you're done with."
+                         : a.tight ? "No app is idle enough to quit. macOS is compressing what apps aren't using, which is how it copes."
+                         : "Nothing needs quitting. macOS has room for everything that's open.")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).padding(.top, 4)
+                } else {
+                    ForEach(rows) { r in row(r).frame(height: Self.rowHeight) }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: CGFloat(slots) * Self.rowHeight, maxHeight: CGFloat(slots) * Self.rowHeight, alignment: .topLeading)
+            ZStack(alignment: .leading) {
+                if let tip = a.tips.first {
+                    Label { Text(tip).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) } icon: {
+                        Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Palette.accent)
                     }
+                    .help(a.tips.joined(separator: "\n\n"))
                 }
             }
-            if !a.pushedOut.isEmpty {
-                section("Squeezed or on the SSD", trailing: nil) {
-                    ForEach(a.pushedOut.prefix(a.idle.isEmpty ? (ws.short ? 3 : 4) : 2)) { p in
-                        HStack(spacing: 8) {
-                            if let path = p.path { FileIcon(path: path, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
-                            Text(p.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Spacer(minLength: 6)
-                            if !ws.compact { SqueezeBar(share: Double(p.compressed) / Double(max(1, p.footprint))).frame(width: 64, height: 6) }
-                            Text("\(Fmt.bytes(p.compressed)) of \(Fmt.bytes(p.footprint))").font(.system(size: 11.5)).monospacedDigit().foregroundStyle(.secondary)
-                                .frame(minWidth: 92, alignment: .trailing)
-                        }
-                        .help("macOS has compressed or moved to the SSD \(Fmt.bytes(p.compressed)) of the \(Fmt.bytes(p.footprint)) \(p.name) holds: memory it isn't using right now.")
-                    }
-                }
-            }
-            if let tip = a.tips.first, !ws.short {
-                Label { Text(tip).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true) } icon: {
-                    Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Palette.accent)
-                }
-                .help(a.tips.joined(separator: "\n\n"))
-            }
+            .frame(height: 16)
             Spacer(minLength: 0)
         }
         .padding(ws.short ? 12 : 14)
         .glass(14)
     }
 
-    @ViewBuilder func section<Rows: View>(_ title: String, trailing: String?, @ViewBuilder rows: () -> Rows) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                if let trailing { Text("· " + trailing).font(.system(size: 11)).foregroundStyle(.secondary) }
+    @ViewBuilder func row(_ r: Row) -> some View {
+        switch r {
+        case .idle(let i):
+            line(icon: i.path, name: i.name, why: i.idleLabel, size: i.footprint) {
+                Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
+                    .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
             }
-            rows()
+            .help(i.atLeast ? "\(i.name) hasn't been in front since Roomy started watching, \(MemoryAdvice.span(i.idleFor)) ago, and is barely using the processor. Quitting it frees about \(Fmt.bytes(i.footprint))."
+                            : "\(i.name) hasn't been in front for \(MemoryAdvice.span(i.idleFor)) and is barely using the processor. Quitting it frees about \(Fmt.bytes(i.footprint)).")
+        case .packed(let p):
+            line(icon: p.path, name: p.name, why: "\(Fmt.bytes(p.compressed)) packed away", size: p.footprint) { EmptyView() }
+                .help("\(p.name) holds \(Fmt.bytes(p.footprint)), and macOS has compressed or moved to the SSD the \(Fmt.bytes(p.compressed)) of it that hasn't been touched lately. It comes back when \(p.name) needs it, a little slower.")
+        }
+    }
+
+    /// One row: icon, name, why it's here, what it holds, and an action column that lines up whether or not there's a button.
+    func line<Action: View>(icon: String?, name: String, why: String, size: Int64, @ViewBuilder action: () -> Action) -> some View {
+        HStack(spacing: 8) {
+            if let icon { FileIcon(path: icon, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
+            Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1).layoutPriority(1)
+            Text(why).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(Fmt.bytes(size)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+            action().frame(width: 48, alignment: .trailing)
         }
     }
 
@@ -899,19 +916,5 @@ struct MemoryAdviceCard: View {
         guard !apps.isEmpty else { return }
         apps.forEach { $0.terminate() }
         model.flash("Asked \(name) to quit.")
-    }
-}
-
-/// How much of an app's memory macOS has squeezed: the amber part is compressed or on the SSD, the rest is in use.
-struct SqueezeBar: View {
-    var share: Double
-    var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Palette.accent.opacity(0.35))
-                Capsule().fill(Palette.warn).frame(width: g.size.width * CGFloat(min(1, max(0, share))))
-            }
-        }
-        .accessibilityHidden(true)
     }
 }

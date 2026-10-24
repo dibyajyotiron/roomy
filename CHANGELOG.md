@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.5
+
+- Activity's Memory view holds still: its two panels keep one height, set by the window, instead of growing and
+  shrinking every couple of seconds as the readings changed. "On the SSD" is always listed ("None" without swap).
+- Memory advice reads plainly: one list of apps worth acting on, one line each. Idle apps say "Idle 2 h" (with a "+"
+  when Roomy only knows since it started watching) and keep their Quit button; apps macOS has compressed say how much
+  it has "packed away". The web tip names the site holding the most ("Web pages hold 2.6 GB, 2.5 GB of it YouTube")
+  instead of listing processes as tabs, and no longer shows tiny helper processes.
+
 ## 0.2.4
 
 - Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above the

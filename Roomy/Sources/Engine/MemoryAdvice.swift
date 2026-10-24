@@ -10,8 +10,11 @@ struct MemoryAdvice: Equatable {
         var path: String
         var footprint: Int64
         var compressed: Int64
-        /// "Not used in 2 h", or "Not used since Roomy opened 45 min ago".
-        var lastUsed: String
+        /// How long it hasn't been in front. When it hasn't been since Roomy started watching, that's only a lower bound.
+        var idleFor: TimeInterval
+        var atLeast = false
+        /// "Idle 2 h", or "Idle 45 min+" when Roomy can't know it was in front before it started watching.
+        var idleLabel: String { "Idle \(MemoryAdvice.span(idleFor))" + (atLeast ? "+" : "") }
     }
     struct PushedOut: Equatable, Identifiable {
         var id: String { name }
@@ -67,15 +70,10 @@ struct MemoryAdvice: Equatable {
             guard let path = a.path, path != ownPath, a.mem >= 150_000_000,
                   let r = running.first(where: { $0.path == path }), r.regular, path != frontmost,
                   !path.hasPrefix("/System/"), (recentCPU[a.name] ?? 100) < 2 else { continue }
-            let since: String
-            if let last = lastActive[path] {
-                guard now.timeIntervalSince(last) >= idleAfter else { continue }
-                since = "Not used in \(Self.span(now.timeIntervalSince(last)))"
-            } else {
-                guard watched >= idleAfter else { continue }
-                since = "Not used since Roomy opened \(Self.span(watched)) ago"
-            }
-            idle.append(IdleApp(name: a.name, path: path, footprint: a.mem, compressed: a.compressed, lastUsed: since))
+            let known = lastActive[path].map { now.timeIntervalSince($0) }
+            let idleFor = known ?? watched
+            guard idleFor >= idleAfter else { continue }
+            idle.append(IdleApp(name: a.name, path: path, footprint: a.mem, compressed: a.compressed, idleFor: idleFor, atLeast: known == nil))
         }
         idle.sort { $0.footprint > $1.footprint }
 
@@ -84,20 +82,29 @@ struct MemoryAdvice: Equatable {
             .map { PushedOut(name: $0.name, path: $0.path, footprint: $0.mem, compressed: $0.compressed) }
 
         var tips: [String] = []
-        // Web pages: Safari's and Chrome's per-site processes.
+        // Web pages: Safari's and Chrome's per-site processes. Processes aren't tabs (a site can have several, and
+        // helpers share the name), so the tip names sites by what they hold, never a tab count.
         let pages = rows.filter { $0.name.hasSuffix("Web Content") || $0.name.contains("(Renderer)") && $0.name.lowercased().contains("chrome") }
         let pageMem = pages.reduce(Int64(0)) { $0 + $1.memory }
         if Double(pageMem) >= 1.5 * gb {
-            let named = pages.sorted { $0.memory > $1.memory }.prefix(3).map { "\($0.name.replacingOccurrences(of: " Web Content", with: "")) \(Fmt.bytes($0.memory))" }
-            tips.append("Web pages use \(Fmt.bytes(pageMem)) across \(pages.count) tabs (\(named.joined(separator: ", "))). Closing tabs you aren't watching or reading frees it.")
+            // Safari names each page's process after its site ("YouTube Web Content"); the generic ones name no site.
+            var bySite: [String: Int64] = [:]
+            for p in pages where p.name.hasSuffix(" Web Content") {
+                let site = String(p.name.dropLast(" Web Content".count))
+                if !site.isEmpty, site != "Safari" { bySite[site, default: 0] += p.memory }
+            }
+            if let top = bySite.max(by: { $0.value < $1.value }), Double(top.value) >= Double(pageMem) * 0.4 {
+                tips.append("Web pages hold \(Fmt.bytes(pageMem)), \(Fmt.bytes(top.value)) of it \(top.key). Close tabs you're done with.")
+            } else {
+                tips.append("Web pages hold \(Fmt.bytes(pageMem)). Close tabs you're done with.")
+            }
         }
         // Very large apps: usually a virtual machine, a container runtime or a big project.
         for a in apps where Double(a.mem) >= 4 * gb && a.path != ownPath {
-            let squeezed = a.compressed > 0 ? ", and macOS has squeezed \(Fmt.bytes(a.compressed)) of it" : ""
-            tips.append("\(a.name) holds \(Fmt.bytes(a.mem))\(squeezed). If it runs virtual machines or containers, give it less memory in its settings, or quit it when you're done.")
+            tips.append("\(a.name) holds \(Fmt.bytes(a.mem)). If it runs containers or virtual machines, lower its memory limit in its settings.")
         }
         if m.swapUsed > 2_000_000_000 && tight {
-            tips.append("Swap shrinks on its own once memory frees up; a restart clears it at once.")
+            tips.append("Swap empties on its own as memory frees up; a restart clears it at once.")
         }
         return MemoryAdvice(summary: summary, tight: tight, pressured: m.pressureLevel >= 2, wanted: wanted, idle: idle, pushedOut: Array(pushedOut), tips: tips)
     }
