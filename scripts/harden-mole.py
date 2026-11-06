@@ -42,6 +42,15 @@ def harden(root):
             raise ValueError(f'Unexpected Mole authorization function: {function}')
         auth_source = auth_source.replace(start, start + '    return 1 # Roomy: no prompt or cached authorization\n')
     auth.write_text(auth_source)
+    tasks = root / 'libexec/lib/optimize/tasks.sh'
+    tasks_source = tasks.read_text()
+    task = 'opt_quarantine_cleanup() {\n'
+    if tasks_source.count(task) != 1:
+        raise ValueError('Unexpected quarantine maintenance task; review before building')
+    tasks.write_text(tasks_source.replace(task, task +
+        '    opt_msg "Download security history preserved by Roomy"\n'
+        '    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"\n'
+        '    return 0 # Roomy: optimize uses a separate task whitelist, not clean path rules\n'))
     safety = 'declare -a SAFETY_WHITELIST_PATTERNS=(\n'
     if source.count(safety) != 1:
         raise ValueError('Unexpected Mole safety whitelist; review before building')

@@ -17,6 +17,9 @@ class MolePolicyTests(unittest.TestCase):
         base.write_text("#!/bin/bash\nreadonly MOLE_BASE_LOADED=1\ndeclare -a SAFETY_WHITELIST_PATTERNS=(\n)\n")
         (base.parent / "sudo.sh").write_text("\n".join(
             name + '() {\n /usr/bin/touch "$MARKER"; return 0;\n}' for name in policy.AUTH_FUNCTIONS))
+        tasks = root / "libexec/lib/optimize/tasks.sh"
+        tasks.parent.mkdir(parents=True)
+        tasks.write_text('opt_quarantine_cleanup() {\n /usr/bin/touch "$MARKER";\n}\n')
         return base
 
     def test_cached_sudo_and_child_shell_are_denied(self):
@@ -41,6 +44,11 @@ class MolePolicyTests(unittest.TestCase):
             self.assertNotIn("MOLE_TEST_NO_AUTH=1", base.read_text())
             self.assertIn('"$HOME/.ssh/*"', base.read_text())
             self.assertIn('QuarantineEventsV2*', base.read_text())
+            result = subprocess.run(["/bin/bash", "-c",
+                'opt_msg() { :; }; optimize_task_result() { :; }; MOLE_OPTIMIZE_OUTCOME_SKIPPED=skip; source "$1"; opt_quarantine_cleanup',
+                "test", str(root / "libexec/lib/optimize/tasks.sh")], env={"MARKER": str(marker)}, capture_output=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(marker.exists(), "Optimize must preserve security history independently of the clean keep list")
 
     def test_changed_upstream_layout_fails_closed(self):
         with tempfile.TemporaryDirectory() as folder:
