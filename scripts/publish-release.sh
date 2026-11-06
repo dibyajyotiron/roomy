@@ -22,9 +22,15 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 awk -v v="## $VERSION" '$0 == v { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md > "$WORK/notes"
 # A failed validation below leaves a draft for inspection, without exposing it as an update.
+# GitHub creates a draft's tag only when it's published, so the tag is pushed first: then the commit check below
+# can run before anything is public, and the draft is made on exactly that tag.
+if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+  git tag "$TAG" "$HEAD" && git -c core.hooksPath=/dev/null push -q origin "refs/tags/$TAG"
+fi
+[ "$(gh api "repos/$REPO/commits/$TAG" --jq .sha)" = "$HEAD" ] || fail "$TAG exists but doesn't point at this commit."
 gh release create "$TAG" "dist/Roomy-$VERSION.pkg" "dist/Roomy-$VERSION.zip" "dist/Roomy-$VERSION.sha256" \
   dist/appcast.xml dist/release-manifest.json dist/release-manifest.sig \
-  -R "$REPO" --target "$HEAD" --title "Roomy $VERSION" --notes-file "$WORK/notes" --draft
+  -R "$REPO" --verify-tag --title "Roomy $VERSION" --notes-file "$WORK/notes" --draft
 mkdir "$WORK/download"
 gh release download "$TAG" -R "$REPO" --dir "$WORK/download"
 python3 -I scripts/release-validation.py verify "$WORK/download" --version "$VERSION" --commit "$HEAD"

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.6
+
+- Security: constrain subprocess environments and cached cleanup commands, and use only the bundled cleaning engine.
+- Remove production diagnostic paths that accepted arbitrary executables or exported local data.
+- Verify a root-private copy of the running app before installing the fan helper; restrict and synchronize its internal watcher.
+- Prevent cleanup from using cached administrator authorization. Preserve credential stores, synced files and wget's HSTS state.
+- Empty Trash without following symlinked folders; protect credentials and other accounts in native cleanup.
+- Enable Hardened Runtime for ad-hoc builds; remove unused preview/debug dependencies and restrict local scan-history permissions.
+- Add security regression tests. Fan control requires authorizing the new helper once after updating.
+
+## 0.2.5
+
+- Activity's Memory view holds still: its two panels keep one height, set by the window, instead of growing and
+  shrinking every couple of seconds as the readings changed. "On the SSD" is always listed ("None" without swap).
+- Memory advice reads plainly: one list of apps worth acting on, one line each. Idle apps say "Idle 2 h" (with a "+"
+  when Roomy only knows since it started watching) and keep their Quit button; apps macOS has compressed say how much
+  it has "packed away". The web tip names the site holding the most ("Web pages hold 2.6 GB, 2.5 GB of it YouTube")
+  instead of listing processes as tabs, and no longer shows tiny helper processes.
+
+## 0.2.4
+
+- Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above the
+  disk. Click it and a ring fills while it downloads, then Roomy installs it and reopens.
+- Memory advice on Activity's Memory view: why memory is tight (how much is compressed or on the SSD), the apps macOS
+  has squeezed most, apps that are open but not in use with what quitting each frees (and a Quit button), and tips
+  for web tabs and apps that run virtual machines. The menu bar points to it when idle apps hold memory.
+- App memory matches Activity Monitor: the menu bar measures each app's footprint, not its resident memory, so an app
+  running a virtual machine (OrbStack) shows its real size. The list says it's by app, with each app's process count,
+  and a bar under it shows where all your memory is (apps, compressed, macOS, cached files, free), which adds up to
+  your RAM.
+- Fixed: choosing Auto after Cool or Max now really hands the fans back to macOS. Roomy used to clear only the
+  override, leaving the fans held at their last speed; fans left stuck that way are reset too.
+- Activity is first in Health, then Protection.
+- Fan control is locked to Roomy. The fan helper (the one part of Roomy that runs as root) now sets a speed only
+  when the exact Roomy build you allowed asks for it, checked against that build's code signature at that moment;
+  anything else on your Mac is refused. Handing the fans back to macOS stays open to anyone, since it only undoes a
+  speed. After a Roomy update, Activity and the menu bar show "Update Fan Control…": one password and it's allowed
+  for the new build.
+- The fans never stay pinned without Roomy. When Roomy sets a speed, the helper starts a small watcher for that Roomy;
+  the moment Roomy exits, however it exits (quit, crash or force quit), the fans go back to macOS.
+- Fan-helper checks run on every build: on a test build with no root and no fans, they confirm other programs and
+  other builds are refused, and that a crash hands the fans back.
+
 ## 0.2.3
 
 - The round button's loader is a ring of liquid light around it, flowing while a clean runs and filling as a scan

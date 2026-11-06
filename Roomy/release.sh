@@ -49,10 +49,10 @@ if [ -n "${ROOMY_SIGN_IDENTITY:-}" ]; then
   for go in "$APP"/Contents/Resources/mole/libexec/bin/*-go; do codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$go"; done
   SPK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
   for part in "$SPK/Autoupdate" "$SPK/Updater.app" "$APP/Contents/Frameworks/Sparkle.framework"; do
-    codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$part"
+    codesign --force --options runtime --entitlements "$ROOT/Roomy/Resources/Release.entitlements" --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$part"
   done
   codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
-  codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$APP"
+  codesign --force --options runtime --entitlements "$ROOT/Roomy/Resources/Release.entitlements" --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$APP"
   codesign --verify --deep --strict "$APP"
 fi
 if [ -n "${ROOMY_SIGN_IDENTITY:-}" ] && [ -n "${ROOMY_NOTARY_PROFILE:-}" ]; then
@@ -113,14 +113,9 @@ if [ -n "$uid" ] && pgrep -x Roomy >/dev/null 2>&1; then
 fi
 exit 0
 SH
-cat > "$WORK/scripts/postinstall" <<'SH'
-#!/bin/sh
-# Gives Roomy.app to the person who installed it, so Roomy's own updates can replace it without asking for a password.
-user=$(stat -f %Su /dev/console)
-if [ -n "$user" ] && [ "$user" != "root" ] && [ -d "$2/Roomy.app" ]; then chown -R "$user":staff "$2/Roomy.app"; fi
-exit 0
-SH
-chmod 755 "$WORK/scripts/preinstall" "$WORK/scripts/postinstall"
+# Keep package-installed applications root-owned. A postinstall chown on the public Applications
+# path can race a local replacement and grant ownership of an unrelated root-owned tree.
+chmod 755 "$WORK/scripts/preinstall"
 pkgbuild --root "$WORK/root" --component-plist "$WORK/component.plist" --install-location /Applications \
   --identifier app.roomy.Roomy.pkg --version "$VERSION" --scripts "$WORK/scripts" "$WORK/Roomy-component.pkg" >/dev/null
 cp LICENSE "$WORK/resources/LICENSE.txt"
@@ -129,7 +124,7 @@ cat > "$WORK/resources/welcome.html" <<HTML
 <h2 style="margin-top:0">Roomy $VERSION</h2>
 <p>Make room on your Mac, and review Mole's findings before you clean.</p>
 <p>This installs Roomy in your Applications folder. Mole, the cleaning engine Roomy uses, comes with it, so there's nothing else to install.</p>
-<p>Roomy keeps itself up to date: when a new version is out, an Update button appears in the toolbar. Click it and Roomy downloads the update and reopens updated.</p>
+<p>Roomy keeps itself up to date: when a new version is out, a round download button appears in the sidebar, just above the disk. Click it and Roomy downloads the update and reopens updated.</p>
 <p>Free software under the GNU General Public License v3.0.</p>
 </body></html>
 HTML

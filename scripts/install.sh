@@ -28,6 +28,8 @@
 # INSTALL_DIR=<folder> installs into that folder instead of /Applications and leaves any running Roomy alone. It's
 # for testing this script only.
 set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
 
 REPO="dibyajyotiron/roomy"
 BUNDLE_ID="app.roomy.Roomy"
@@ -177,6 +179,10 @@ ROOMY_VERIFY_SWIFT
     $SUDO rm -rf "$STAGE"
     fail "Couldn't stage the new app. The installed copy was preserved."
   fi
+  # Set ownership while the staged copy is inside a private directory, before publishing its path.
+  if [ -n "$SUDO" ]; then
+    sudo chown -R -P "$(id -un):$(id -gn)" "$STAGE/Roomy.app"
+  fi
   HAD_PREVIOUS=0
   if [ -e "$APP" ]; then $SUDO mv "$APP" "$STAGE/previous.app"; HAD_PREVIOUS=1; fi
   if ! $SUDO mv "$STAGE/Roomy.app" "$APP"; then
@@ -191,9 +197,6 @@ ROOMY_VERIFY_SWIFT
   # 5. Ownership
 
   # Roomy replaces itself when it updates, which needs no password only if you own the app.
-  if [ -n "$SUDO" ]; then
-    sudo chown -R "$(id -un):$(id -gn)" "$APP"
-  fi
   [ -O "$APP" ] || fail "Roomy is installed, but $APP isn't owned by you, so updates will ask for a password."
 
   say "Installed $APP"

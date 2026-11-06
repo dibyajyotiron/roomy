@@ -24,7 +24,7 @@ defer { try? fm.removeItem(atPath: tmp) }
 func write(_ path: String, bytes: Int) throws {
     try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
     var data = Data(count: bytes)
-    data.withUnsafeMutableBytes { raw in for i in stride(from: 0, to: bytes, by: 4096) { raw[i] = UInt8(truncatingIfNeeded: i / 4096 + 1) } }
+    data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in for i in stride(from: 0, to: bytes, by: 4096) { raw[i] = UInt8(truncatingIfNeeded: i / 4096 + 1) } }
     try data.write(to: URL(fileURLWithPath: path))
 }
 func lsize(_ p: String) -> Int64 { var st = stat(); lstat(p, &st); return FileSizer.actualSize(st) }
@@ -141,6 +141,16 @@ suite("PathSafety") {
     check(safety.isProtected(home + "/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data"), "protects OrbStack group container")
     check(safety.isProtected("/private/var/folders/ab/cd/C/com.crowdstrike.falcon.Agent"), "protects EDR agent caches")
     check(!safety.isProtected("/private/var/folders/ab/cd/C/com.example.app"), "allows other per-user Darwin caches")
+    for suffix in ["/.ssh/id_ed25519", "/.aws/credentials", "/.gnupg/private", "/.kube/config", "/Library/Keychains/login.keychain-db", "/Library/Mobile Documents/file", "/Library/CloudStorage/file"] {
+        check(safety.isProtected(home + suffix), "protects credentials and synced files: \(suffix)")
+    }
+    check(safety.isProtected("/Users/roomy-other-account/Downloads/file"), "protects other account descendants")
+    let fixtureHome = tmp + "/private-home"
+    try fm.createDirectory(atPath: fixtureHome + "/.ssh", withIntermediateDirectories: true)
+    try write(fixtureHome + "/.ssh/key", bytes: 12)
+    symlink(fixtureHome + "/.ssh", tmp + "/credential-alias")
+    check((try? PathSafety(homeRoots: [fixtureHome]).validateTrashTarget(tmp + "/credential-alias/key")) == nil,
+          "protects credential directories reached through symlinks")
     // A symlink pointing into a protected tree is refused as a Trash target
     let trap = tmp + "/to-system"
     symlink("/System/Library", trap)

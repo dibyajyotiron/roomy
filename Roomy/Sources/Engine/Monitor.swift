@@ -7,7 +7,11 @@ import AppKit
 /// Mole's status adds the health score.
 @MainActor @Observable
 final class Monitor {
-    struct AppUsage: Identifiable, Hashable { var id: String { name }; var name: String; var path: String?; var cpu: Double; var mem: Int64; var processes: Int }
+    struct AppUsage: Identifiable, Hashable {
+        var id: String { name }; var name: String; var path: String?; var cpu: Double; var mem: Int64; var processes: Int
+        /// How much of `mem` macOS has compressed or swapped out (only while the process feed runs).
+        var compressed: Int64 = 0
+    }
 
     var sample = SystemSample()
     var history: [SystemSample] = []
@@ -49,10 +53,44 @@ final class Monitor {
         }
     }
 
+    /// When Roomy started watching, and when you last switched to each app (by bundle path) since then.
+    let watchingSince = Date()
+    @ObservationIgnored private(set) var lastActive: [String: Date] = [:]
+    /// Each app's CPU (share of one core) averaged over roughly the last five minutes, by app name.
+    @ObservationIgnored private(set) var recentCPU: [String: Double] = [:]
+    @ObservationIgnored private var recentAt: Date?
+
     init() {
         feed.onUpdate = { [weak self] rows, procs, threads in
             MainActor.assumeIsolated { self?.receive(rows, procs, threads) }
         }
+        if let p = NSWorkspace.shared.frontmostApplication?.bundleURL?.path { lastActive[p] = Date() }
+        NotificationCenter.default.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared, queue: .main) { [weak self] n in
+            let path = (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleURL?.path
+            MainActor.assumeIsolated { if let path { self?.lastActive[path] = Date() } }
+        }
+    }
+
+    /// What's filling memory and what would help (see MemoryAdvice), from the latest readings.
+    var memoryAdvice: MemoryAdvice {
+        let ws = NSWorkspace.shared
+        let running = ws.runningApplications.compactMap { a in
+            a.bundleURL.map { MemoryAdvice.Running(name: a.localizedName ?? "", path: $0.path, regular: a.activationPolicy == .regular) }
+        }
+        return MemoryAdvice.make(memory: sample.memory, apps: apps, rows: processes, running: running,
+                                 frontmost: ws.frontmostApplication?.bundleURL?.path, lastActive: lastActive,
+                                 watchingSince: watchingSince, recentCPU: recentCPU)
+    }
+
+    /// Folds the latest per-app CPU into a five-minute average, weighted by the time since the last reading.
+    private func noteCPU(_ apps: [AppUsage]) {
+        let now = Date(), ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
+        let dt = recentAt.map { now.timeIntervalSince($0) } ?? 0
+        recentAt = now
+        let k = dt > 0 ? min(1, dt / 300) : 1
+        var next: [String: Double] = [:]
+        for a in apps { let c = a.cpu * ncpu; next[a.name] = recentCPU[a.name].map { $0 + (c - $0) * k } ?? c }
+        recentCPU = next
     }
 
     func watch() {
@@ -101,7 +139,7 @@ final class Monitor {
             if temps.count > Self.historyLength { temps.removeFirst(temps.count - Self.historyLength) }
         }
         sample = s; history = h; thermal = th; tempHistory = temps; battery = bat
-        if let usage { apps = usage }
+        if let usage { apps = usage; noteCPU(usage) }
         if let status { self.status = status }
         fans.refresh()
         lastUpdate = Date()
@@ -130,26 +168,34 @@ final class Monitor {
         var grouped: [String: AppUsage] = [:]
         let ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
         for r in rows {
-            let key = r.appPath.map { (Paths.name($0) as NSString).deletingPathExtension } ?? r.name
-            var a = grouped[key] ?? AppUsage(name: key, path: r.appPath, cpu: 0, mem: 0, processes: 0)
-            a.cpu += r.cpu / ncpu; a.mem += r.memory; a.processes += 1
+            // Grouped exactly like Activity's Apps view: the outermost .app, under the name the app gives itself.
+            let outer = ProcessRow.outerApp(r)
+            let key = outer.map { ProcessRow.bundleInfo($0).name } ?? r.name
+            var a = grouped[key] ?? AppUsage(name: key, path: outer ?? r.appPath, cpu: 0, mem: 0, processes: 0)
+            a.cpu += r.cpu / ncpu; a.mem += r.memory; a.compressed += r.compressed; a.processes += 1
             grouped[key] = a
         }
+        noteCPU(Array(grouped.values))
         apps = grouped.values.sorted { $0.mem > $1.mem }.prefix(30).map { var x = $0; x.cpu = (x.cpu * 10).rounded() / 10; return x }
     }
 
     /// `ps` grouped by app bundle, CPU as a share of the whole Mac. Used while the process feed is off.
+    /// Memory is each process's footprint, the number Activity Monitor's Memory column shows, not its resident size:
+    /// resident size leaves out compressed memory and memory mapped for a virtual machine (OrbStack's Linux VM read
+    /// 1.8 GB resident against a 7 GB footprint).
     nonisolated static func appUsage() async -> [AppUsage] {
         let r = await Shell.run("/bin/ps", ["-Ao", "pid=,pcpu=,rss=,comm="], timeout: 10)
+        let others = await SystemFootprints.shared.current()
         let ncpu = Double(ProcessInfo.processInfo.activeProcessorCount)
         var apps: [String: AppUsage] = [:]
         for line in r.output.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-            guard parts.count == 4, let cpu = Double(parts[1]), let rss = Int64(parts[2]) else { continue }
+            guard parts.count == 4, let pid = Int32(parts[0]), let cpu = Double(parts[1]), let rssKB = Int64(parts[2]) else { continue }
+            let rss = (footprint(pid) ?? others[pid] ?? rssKB * 1024) / 1024
             let comm = String(parts[3])
-            let m = comm.firstMatch(#"^(.*?/([^/]+)\.app)/"#)
-            let key = m?[2] ?? Paths.name(comm)
-            var a = apps[key] ?? AppUsage(name: key, path: m?[1], cpu: 0, mem: 0, processes: 0)
+            let outer = ProcessRow.outerApp(ProcessRow(pid: pid, name: "", user: "", path: comm))
+            let key = outer.map { ProcessRow.bundleInfo($0).name } ?? Paths.name(comm)
+            var a = apps[key] ?? AppUsage(name: key, path: outer, cpu: 0, mem: 0, processes: 0)
             a.cpu += cpu / ncpu; a.mem += rss * 1024; a.processes += 1
             apps[key] = a
         }
@@ -172,8 +218,42 @@ final class Monitor {
     /// Quits a process: politely for apps (they can save), with SIGTERM for others. `force` uses SIGKILL.
     /// Only your own processes; macOS's and other users' processes can't be quit from here.
     func quit(_ p: ProcessRow, force: Bool) -> Bool {
+        // An app's row (negative id) quits the app itself, which takes its helpers with it.
+        if p.isApp, p.mine, let app = NSRunningApplication(processIdentifier: p.shownPID) { return force ? app.forceTerminate() : app.terminate() }
         guard p.mine, p.pid > 1 else { return false }
         if let app = NSRunningApplication(processIdentifier: p.pid) { return force ? app.forceTerminate() : app.terminate() }
         return kill(p.pid, force ? SIGKILL : SIGTERM) == 0
+    }
+}
+
+extension Monitor {
+    /// A process's physical footprint (Activity Monitor's Memory column), for processes Roomy may inspect: yours.
+    nonisolated static func footprint(_ pid: Int32) -> Int64? {
+        var ri = rusage_info_v4()
+        let ok = withUnsafeMutablePointer(to: &ri) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) } } == 0
+        return ok ? Int64(clamping: ri.ri_phys_footprint) : nil
+    }
+}
+
+/// Footprints of processes Roomy isn't allowed to inspect (WindowServer and other system ones), read from `top`, which
+/// may. A `top` snapshot costs most of a second of CPU, so it's taken at most every 30 seconds.
+actor SystemFootprints {
+    static let shared = SystemFootprints()
+    private var cache: [Int32: Int64] = [:]
+    private var at = Date.distantPast
+    func current() async -> [Int32: Int64] {
+        guard Date().timeIntervalSince(at) > 30 else { return cache }
+        at = Date()
+        let r = await Shell.run("/usr/bin/top", ["-l", "1", "-o", "mem", "-n", "80", "-stats", "pid,mem"], timeout: 15)
+        var out: [Int32: Int64] = [:]
+        var table = false
+        for line in r.output.split(separator: "\n") {
+            let cols = line.split(separator: " ", omittingEmptySubsequences: true)
+            if cols.first == "PID" { table = true; continue }
+            guard table, cols.count >= 2, let pid = Int32(cols[0]) else { continue }
+            out[pid] = ProcessFeed.bytes(String(cols[1]))
+        }
+        if !out.isEmpty { cache = out }
+        return cache
     }
 }

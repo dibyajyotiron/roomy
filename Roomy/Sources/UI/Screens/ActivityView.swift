@@ -5,6 +5,7 @@ import Charts
 /// its charts, the numbers Activity Monitor shows (each explains itself on hover) and every process using it.
 struct ActivityView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @AppStorage("activityResource") private var resourceRaw = Resource.cpu.rawValue
     @State private var selection: Set<Int32> = []
     @State private var search = ""
@@ -19,10 +20,13 @@ struct ActivityView: View {
     var m: Monitor { model.monitor }
 
     var rows: [ProcessRow] {
-        m.processes.filter { r in
-            (scope == .all || scope == .mine && r.mine || scope == .apps && r.mine && r.appPath != nil)
-                && (search.isEmpty || r.name.localizedCaseInsensitiveContains(search) || String(r.pid) == search)
+        func matches(_ r: ProcessRow) -> Bool { search.isEmpty || r.name.localizedCaseInsensitiveContains(search) || String(r.shownPID) == search }
+        // Apps: one row per app with its processes inside, found by the app's name or any of its processes'.
+        if scope == .apps {
+            return ProcessRow.groupedByApp(m.processes.filter(\.mine))
+                .filter { matches($0) || ($0.members ?? []).contains(where: matches) }
         }
+        return m.processes.filter { r in (scope == .all || r.mine) && matches(r) }
     }
 
     var body: some View {
@@ -37,12 +41,18 @@ struct ActivityView: View {
                         .buttonStyle(.glass).help("Open Apple's Activity Monitor")
                 }
             }
-            Live { cards }.padding(.horizontal, 28).padding(.bottom, 12)
+            Live { cards }.padding(.horizontal, 28).padding(.bottom, ws.short ? 8 : 12)
             if resource == .thermals {
                 ScrollView { ThermalsPanel().padding(.horizontal, 28).padding(.bottom, 24) }
             } else {
-                Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
-                processes.padding(.horizontal, 28).padding(.bottom, 16)
+                if resource == .memory {
+                    // Memory: where it is and what would help, side by side, so the process list keeps its room.
+                    Live { MemoryPanels { freeUp } }.padding(.horizontal, 28).padding(.bottom, ws.short ? 8 : 12)
+                } else {
+                    Live { detail }.padding(.horizontal, 28).padding(.bottom, 12)
+                }
+                // The list always keeps a few rows, however short the window.
+                processes.frame(minHeight: 150).padding(.horizontal, 28).padding(.bottom, 16)
             }
         }
         .onAppear { m.watchProcesses() }
@@ -81,7 +91,8 @@ struct ActivityView: View {
                  caption: m.fans.hasFans ? "\(Int(m.fans.rpm).formatted()) RPM fans" : ThermalsPanel.stateLabel(m.thermal.state),
                  series: m.tempHistory.map(\.1), max: nil, tint: ThermalsPanel.color(m.thermal.cpu ?? 0))
         }
-        .frame(height: 104)
+        // Compact width drops each card's caption; a short window drops the sparkline too.
+        .frame(height: ws.short ? 66 : ws.compact ? 86 : 104)
     }
 
     func card(_ r: Resource, value: String, unit: String, caption: String, series: [Double], max: Double?, tint: Color? = nil) -> some View {
@@ -90,7 +101,7 @@ struct ActivityView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: r.symbol).font(.system(size: 11, weight: .semibold))
-                    Text(r.title).font(.system(size: 12, weight: .semibold))
+                    Text(r.title).font(.system(size: 12, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
@@ -98,11 +109,12 @@ struct ActivityView: View {
                     Text(value).font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
                     Text(unit).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
-                Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                Spark(values: series, max: max, tint: tint ?? Palette.accent).frame(height: 18)
+                if !ws.compact { Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
+                if !ws.short { Spark(values: series, max: max, tint: tint ?? Palette.accent).frame(height: 18) }
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, ws.compact ? 10 : 12).padding(.vertical, ws.short ? 8 : 10)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .help(caption)
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -224,7 +236,7 @@ struct ActivityView: View {
                             .disabled(!p.mine).help(p.mine ? "Quit \(p.name)" : "Belongs to macOS or another user, so it can't be quit from here.")
                     }
                 }
-                Text(resource.tableNote).font(.system(size: 11)).foregroundStyle(.secondary)
+                if !ws.compact { Text(resource.tableNote).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
             }
             .padding(.bottom, 8)
             Live {
@@ -235,7 +247,10 @@ struct ActivityView: View {
         }
     }
 
-    var selectedRow: ProcessRow? { selection.count == 1 ? m.processes.first { $0.pid == selection.first } : nil }
+    var selectedRow: ProcessRow? {
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return rows.first { $0.pid == id } ?? rows.lazy.compactMap { $0.members?.first { $0.pid == id } }.first
+    }
 }
 
 /// Evaluates its content in its own body, so whatever the content reads is tracked for this view alone.
@@ -277,54 +292,67 @@ struct ProcessTable: View {
         Group {
             switch resource {
             case .cpu, .thermals:
-                Table(rows.sorted(using: cpuSort), selection: $selection, sortOrder: $cpuSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $cpuSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("% CPU", value: \.cpu) { Text(String(format: "%.1f", $0.cpu)).monospacedDigit() }.width(70)
                     TableColumn("CPU Time", value: \.cpuTime) { Text($0.cpuTime).monospacedDigit() }.width(80)
                     TableColumn("Threads", value: \.threads) { Text("\($0.threads)").monospacedDigit() }.width(60)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(cpuSort) }
             case .memory:
-                Table(rows.sorted(using: memSort), selection: $selection, sortOrder: $memSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $memSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Memory", value: \.memory) { Text(Fmt.bytes($0.memory)).monospacedDigit() }.width(80)
                     TableColumn("Threads", value: \.threads) { Text("\($0.threads)").monospacedDigit() }.width(60)
                     TableColumn("Ports", value: \.ports) { Text("\($0.ports)").monospacedDigit() }.width(60)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(memSort) }
             case .energy:
-                Table(rows.sorted(using: energySort), selection: $selection, sortOrder: $energySort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $energySort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Energy Impact", value: \.energy) { Text(String(format: "%.1f", $0.energy)).monospacedDigit() }.width(100)
                     TableColumn("% CPU", value: \.cpu) { Text(String(format: "%.1f", $0.cpu)).monospacedDigit() }.width(70)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(energySort) }
             case .disk:
-                Table(rows.sorted(using: diskSort), selection: $selection, sortOrder: $diskSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $diskSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Read /s", value: \.diskReadValue) { Text($0.diskRead.map { Fmt.rate($0).joined } ?? "—").monospacedDigit() }.width(90)
                     TableColumn("Written /s", value: \.diskWriteValue) { Text($0.diskWrite.map { Fmt.rate($0).joined } ?? "—").monospacedDigit() }.width(90)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(diskSort) }
             case .network:
-                Table(rows.sorted(using: netSort), selection: $selection, sortOrder: $netSort) {
+                Table(of: ProcessRow.self, selection: $selection, sortOrder: $netSort) {
                     TableColumn("Process", value: \.name) { ProcessName(row: $0) }.width(min: 200, ideal: 280)
                     TableColumn("Received /s", value: \.netIn) { Text(Fmt.rate($0.netIn).joined).monospacedDigit() }.width(90)
                     TableColumn("Sent /s", value: \.netOut) { Text(Fmt.rate($0.netOut).joined).monospacedDigit() }.width(90)
-                    TableColumn("PID", value: \.pid) { Text("\($0.pid)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
+                    TableColumn("PID", value: \.shownPID) { Text("\($0.shownPID)").monospacedDigit().foregroundStyle(.secondary) }.width(60)
                     TableColumn("User", value: \.user) { Text($0.user).foregroundStyle(.secondary) }.width(min: 80, ideal: 100)
-                }
+                } rows: { content(netSort) }
             }
         }
         .contextMenu(forSelectionType: Int32.self) { ids in
-            if let id = ids.first, let p = rows.first(where: { $0.pid == id }) {
+            if let id = ids.first, let p = rows.first(where: { $0.pid == id }) ?? rows.lazy.compactMap({ $0.members?.first { $0.pid == id } }).first {
                 Button("Quit…") { quit(p) }.disabled(!p.mine)
                 if let path = p.path ?? p.appPath { Button("Show in Finder") { reveal(path) } }
-                Button("Copy PID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("\(p.pid)", forType: .string) }
+                Button("Copy PID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString("\(p.shownPID)", forType: .string) }
+            }
+        }
+    }
+}
+
+extension ProcessTable {
+    /// Rows, with an app's processes under a disclosure arrow, sorted the same way as the table.
+    @TableRowBuilder<ProcessRow> func content(_ order: [KeyPathComparator<ProcessRow>]) -> some TableRowContent<ProcessRow> {
+        ForEach(rows.sorted(using: order)) { r in
+            if let ms = r.members {
+                DisclosureTableRow(r) { ForEach(ms.sorted(using: order)) { TableRow($0) } }
+            } else {
+                TableRow(r)
             }
         }
     }
@@ -343,6 +371,9 @@ struct ProcessName: View {
         HStack(spacing: 7) {
             if let p = row.appPath ?? row.path { FileIcon(path: p, size: 16) } else { Image(systemName: "gearshape").frame(width: 16).foregroundStyle(.secondary) }
             Text(row.name).lineLimit(1)
+            if let n = row.members?.count {
+                Text("\(n) processes").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .help(row.path ?? row.name)
     }
@@ -656,4 +687,234 @@ enum Explain {
     static let sent = "Data leaving this Mac per second."
     static let packets = "Network packets per second. Many small packets with little data is typical for video calls and games."
     static let thermalState = "macOS's own verdict on heat. When it's serious or critical, macOS slows the processor to cool down; Activity Monitor doesn't show this."
+}
+
+/// Activity's Memory view: two panels side by side, the same height. Left, where the Mac's memory is; right, what
+/// would help. Their height depends on the window only, never on the readings: both lay out a fixed set of lines.
+struct MemoryPanels<FreeUp: View>: View {
+    @ViewBuilder var freeUp: FreeUp
+    var body: some View {
+        // Always side by side: stacking them pushed the process list off a laptop screen. Narrow and short windows
+        // tighten each panel instead (see `dense`).
+        HStack(alignment: .top, spacing: 12) {
+            MemoryOverview(freeUp: { freeUp }).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            MemoryAdviceCard().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Where the Mac's memory is, as one bar the width of its RAM: apps, macOS, compressed, cached files and free, which add
+/// up to the whole bar. Swap is a hatched piece outside the bar, so "full, and spilling onto the SSD" reads at a glance.
+struct MemoryOverview<FreeUp: View>: View {
+    @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
+    @ViewBuilder var freeUp: FreeUp
+
+    var body: some View {
+        let m = model.monitor.sample.memory
+        let level = model.monitor.pressure.level
+        let tint = [Palette.ok, Palette.warn, Palette.bad][level]
+        let parts = [MemoryPart(name: "Apps", bytes: m.app, color: Palette.accent, help: Explain.app),
+                     MemoryPart(name: "macOS", bytes: m.wired, color: Color.primary.opacity(0.38), help: Explain.wired),
+                     MemoryPart(name: "Compressed", bytes: m.compressed, color: Palette.warn, help: Explain.compressed),
+                     MemoryPart(name: "Cached files", bytes: m.cached, color: Palette.accent.opacity(0.3), help: Explain.cached),
+                     MemoryPart(name: "Free", bytes: m.free, color: Color.primary.opacity(0.08), help: "Memory nothing is using right now.")]
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Where your \(Fmt.bytes(m.total)) is").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 8)
+                Explained(Explain.pressure) {
+                    HStack(spacing: 6) {
+                        Circle().fill(tint).frame(width: 7, height: 7)
+                        Text(["Pressure normal", "Pressure rising", "Pressure high"][level]).font(.system(size: 11.5, weight: .medium)).foregroundStyle(tint)
+                        if !ws.compact { Spark(values: model.monitor.history.map(\.memory.pressurePercent), max: 100, tint: tint).frame(width: 64, height: 16) }
+                    }
+                }
+            }
+            MemoryMap(parts: parts, total: m.total, swap: m.swapUsed)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: ws.compact ? 92 : 104), spacing: 10, alignment: .leading)], alignment: .leading, spacing: ws.short ? 6 : 8) {
+                ForEach(parts) { p in
+                    Explained(p.help) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2.5).fill(p.color).frame(width: 9, height: 9).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.name).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(Fmt.bytes(p.bytes)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            }
+                        }
+                    }
+                }
+                // Always listed, "None" without swap: swap coming and going mustn't add or drop a legend row.
+                Explained(Explain.swap) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Hatch(color: Palette.bad).frame(width: 9, height: 9).clipShape(RoundedRectangle(cornerRadius: 2.5)).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                            .opacity(m.swapUsed > 0 ? 1 : 0.4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("On the SSD").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(m.swapUsed > 0 ? Fmt.bytes(m.swapUsed) : "None").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(m.swapUsed > 0 ? .primary : .secondary)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Explained(Explain.used) {
+                    Text(ws.compact ? "\(Fmt.bytes(m.used)) in use" : "\(Fmt.bytes(m.used)) in use, as Activity Monitor counts it")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                freeUp
+            }
+        }
+        .padding(ws.short ? 12 : 14)
+        .glass(14)
+    }
+}
+
+/// One part of the Mac's memory, as the bar and its legend show it.
+struct MemoryPart: Identifiable { var id: String { name }; var name: String; var bytes: Int64; var color: Color; var help: String }
+
+/// The bar: RAM as its full width, split into its parts, and swap as a hatched piece past its end.
+struct MemoryMap: View {
+    var parts: [MemoryPart]
+    var total: Int64
+    var swap: Int64
+    var body: some View {
+        GeometryReader { g in
+            let over = swap > 0 ? min(0.45, Double(swap) / Double(max(1, total))) : 0
+            let gap: CGFloat = over > 0 ? 6 : 0
+            let ram = (g.size.width - gap) / CGFloat(1 + over)
+            let sum = max(1, parts.reduce(0) { $0 + $1.bytes })
+            HStack(spacing: gap) {
+                HStack(spacing: 1.5) {
+                    ForEach(parts) { p in
+                        if p.bytes > 0 { Rectangle().fill(p.color).frame(width: max(2, ram * CGFloat(p.bytes) / CGFloat(sum))) }
+                    }
+                }
+                .frame(width: ram, alignment: .leading)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                if over > 0 {
+                    Hatch(color: Palette.bad)
+                        .frame(width: max(8, g.size.width - ram - gap))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Palette.bad.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                }
+            }
+        }
+        .frame(height: 16)
+        .accessibilityElement()
+        .accessibilityLabel(parts.map { "\($0.name) \(Fmt.bytes($0.bytes))" }.joined(separator: ", ") + (swap > 0 ? ", and \(Fmt.bytes(swap)) moved to the SSD" : ""))
+    }
+}
+
+/// Diagonal stripes: memory that isn't in RAM any more.
+struct Hatch: View {
+    var color: Color
+    var body: some View {
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(color.opacity(0.12)))
+            var p = Path()
+            var x: CGFloat = -size.height
+            while x < size.width { p.move(to: CGPoint(x: x, y: size.height)); p.addLine(to: CGPoint(x: x + size.height, y: 0)); x += 5 }
+            ctx.stroke(p, with: .color(color.opacity(0.55)), lineWidth: 1.4)
+        }
+    }
+}
+
+/// What would help: a one-line verdict, then the apps worth acting on, one line each: open but idle (with Quit), then
+/// the ones macOS has packed away most of. The card is always the same height, whatever the readings: a fixed number of
+/// rows and one tip line, reserved even when empty, so the panels never jump as memory changes. From live readings only.
+struct MemoryAdviceCard: View {
+    @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
+    static let rowHeight: CGFloat = 26
+    var slots: Int { ws.short ? 3 : 4 }
+
+    enum Row: Identifiable {
+        case idle(MemoryAdvice.IdleApp)
+        case packed(MemoryAdvice.PushedOut)
+        var id: String { switch self { case .idle(let i): "idle " + i.id; case .packed(let p): "packed " + p.id } }
+    }
+
+    var body: some View {
+        let a = model.monitor.memoryAdvice
+        let total = model.monitor.sample.memory.total
+        let idlePaths = Set(a.idle.map(\.path))
+        let rows = (a.idle.map(Row.idle) + a.pushedOut.filter { $0.path.map { !idlePaths.contains($0) } ?? true }.map(Row.packed)).prefix(slots)
+        VStack(alignment: .leading, spacing: ws.short ? 8 : 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                // Worded to agree with the pressure shown beside it: "tight" only when macOS itself says so.
+                Image(systemName: a.pressured ? "exclamationmark.triangle.fill" : a.tight ? "arrow.down.right.and.arrow.up.left.circle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(a.pressured ? Palette.warn : a.tight ? Palette.accent : Palette.ok)
+                Text(a.pressured ? "Memory is tight" : a.tight ? "Memory is full but coping" : "Memory is fine")
+                    .font(.system(size: 13, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                Spacer(minLength: 8)
+                if a.tight, a.wanted > total {
+                    Text("Open apps want \(Fmt.bytes(a.wanted)) of \(Fmt.bytes(total))").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                } else if a.idleTotal > 0 {
+                    Text("Quitting idle apps frees about \(Fmt.bytes(a.idleTotal))").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            .help(a.summary)
+            VStack(alignment: .leading, spacing: 0) {
+                if rows.isEmpty {
+                    Text(a.pressured ? "No app is idle enough to quit. Close windows and tabs you're done with."
+                         : a.tight ? "No app is idle enough to quit. macOS is compressing what apps aren't using, which is how it copes."
+                         : "Nothing needs quitting. macOS has room for everything that's open.")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).padding(.top, 4)
+                } else {
+                    ForEach(rows) { r in row(r).frame(height: Self.rowHeight) }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: CGFloat(slots) * Self.rowHeight, maxHeight: CGFloat(slots) * Self.rowHeight, alignment: .topLeading)
+            ZStack(alignment: .leading) {
+                if let tip = a.tips.first {
+                    Label { Text(tip).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) } icon: {
+                        Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Palette.accent)
+                    }
+                    .help(a.tips.joined(separator: "\n\n"))
+                }
+            }
+            .frame(height: 16)
+            Spacer(minLength: 0)
+        }
+        .padding(ws.short ? 12 : 14)
+        .glass(14)
+    }
+
+    @ViewBuilder func row(_ r: Row) -> some View {
+        switch r {
+        case .idle(let i):
+            line(icon: i.path, name: i.name, why: i.idleLabel, size: i.footprint) {
+                Button("Quit") { quit(i.path, i.name) }.controlSize(.small)
+                    .help("Asks \(i.name) to quit, the same as ⌘Q: it can ask you to save first.")
+            }
+            .help(i.atLeast ? "\(i.name) hasn't been in front since Roomy started watching, \(MemoryAdvice.span(i.idleFor)) ago, and is barely using the processor. Quitting it frees about \(Fmt.bytes(i.footprint))."
+                            : "\(i.name) hasn't been in front for \(MemoryAdvice.span(i.idleFor)) and is barely using the processor. Quitting it frees about \(Fmt.bytes(i.footprint)).")
+        case .packed(let p):
+            line(icon: p.path, name: p.name, why: "\(Fmt.bytes(p.compressed)) packed away", size: p.footprint) { EmptyView() }
+                .help("\(p.name) holds \(Fmt.bytes(p.footprint)), and macOS has compressed or moved to the SSD the \(Fmt.bytes(p.compressed)) of it that hasn't been touched lately. It comes back when \(p.name) needs it, a little slower.")
+        }
+    }
+
+    /// One row: icon, name, why it's here, what it holds, and an action column that lines up whether or not there's a button.
+    func line<Action: View>(icon: String?, name: String, why: String, size: Int64, @ViewBuilder action: () -> Action) -> some View {
+        HStack(spacing: 8) {
+            if let icon { FileIcon(path: icon, size: 18) } else { Image(systemName: "gearshape").frame(width: 18) }
+            Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1).layoutPriority(1)
+            Text(why).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 6)
+            Text(Fmt.bytes(size)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+            action().frame(width: 48, alignment: .trailing)
+        }
+    }
+
+    func quit(_ path: String, _ name: String) {
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }
+        guard !apps.isEmpty else { return }
+        apps.forEach { $0.terminate() }
+        model.flash("Asked \(name) to quit.")
+    }
 }

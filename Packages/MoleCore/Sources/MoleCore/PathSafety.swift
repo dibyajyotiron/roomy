@@ -79,7 +79,17 @@ public struct PathSafety: Sendable {
         // EDR protection depends only on the absolute path, so it runs before anything that needs HOME.
         if PathSafety.isEndpointSecurityCache(clean) { return true }
         if PathSafety.isCritical(clean) { return true }
+        // No other account's data is a cleanup target, even when permissions allow access.
+        let resolved = (clean as NSString).resolvingSymlinksInPath
+        if resolved.hasPrefix("/Users/"), !homeRoots.contains(where: {
+            resolved == $0 || resolved.hasPrefix($0 + "/")
+        }) { return true }
         for home in homeRoots {
+            for suffix in ["/.ssh", "/.aws", "/.gnupg", "/.kube", "/Library/Keychains",
+                           "/Library/Mobile Documents", "/Library/CloudStorage"] {
+                let root = home + suffix
+                if clean == root || clean.hasPrefix(root + "/") || PathSafety.isWithinExisting(clean, root: root) { return true }
+            }
             if clean == home || PathSafety.isSameExisting(clean, home) { return true }
             let docker = home + "/Library/Containers/com.docker.docker"
             if clean == docker || clean.hasPrefix(docker + "/") || PathSafety.isWithinExisting(clean, root: docker) { return true }

@@ -172,6 +172,9 @@ struct IconRail: View {
                 RailItem(area: a, selected: a == current, news: model.areaHasNews(a)) { go(a) }
             }
             Spacer(minLength: 12)
+            // Above the disk dial: the rail is anchored at the bottom, so the button appears in the free space and the
+            // dial and Settings never move.
+            RailUpdateButton()
             DiskDial()
             RailItem(area: .settings, selected: current == .settings, news: false) { go(.settings) }
         }
@@ -338,10 +341,31 @@ struct DiskDial: View {
 /// selection is a raised pill that slides between rows.
 struct AreaList: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     var area: Area
     @Namespace private var ns
 
     var body: some View {
+        if ws.compact { compactList } else { fullList }
+    }
+
+    /// Compact width: the modules as a column of their icons, named (with their count) on hover like the rail, so the
+    /// screen keeps about 170pt more for its content.
+    var compactList: some View {
+        VStack(spacing: 4) {
+            ForEach(Array(area.routes.enumerated()), id: \.element) { i, r in
+                CompactAreaRow(route: r, selected: model.route == r, badge: model.badge(for: r), ns: ns) {
+                    withAnimation(.smooth(duration: 0.3)) { model.route = r }
+                }
+                .modifier(RiseIn(delay: Double(i) * 0.03))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 64).padding(.bottom, 16)
+        .frame(width: 66)
+    }
+
+    var fullList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(area.title).font(.system(size: 22, weight: .bold)).tracking(-0.4)
             Text(area.blurb).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -400,5 +424,92 @@ struct WindowReader: NSViewRepresentable {
             super.viewDidMoveToWindow()
             if let w = window { onWindow?(w) }
         }
+    }
+}
+
+/// A new Roomy, as a solid round button in the rail just above the disk dial. One click downloads it (a ring around the
+/// button fills) and Roomy quits, installs it and reopens. Nothing shows while Roomy is up to date.
+struct RailUpdateButton: View {
+    @State private var updater = AppUpdater.shared
+    @State private var hover = false
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
+
+    var body: some View {
+        switch updater.state {
+        case .available(let v): button(v, busy: false, tip: "Update to Roomy \(v)")
+        case .downloading(let v): button(v, busy: true, tip: updater.progress.map { "Downloading Roomy \(v) · \(Int($0 * 100))%" } ?? "Downloading Roomy \(v)")
+        case .ready(let v): button(v, busy: true, tip: "Installing Roomy \(v)…")
+        default: EmptyView()
+        }
+    }
+
+    func button(_ version: String, busy: Bool, tip: String) -> some View {
+        Button { updater.update() } label: {
+            ZStack {
+                Circle().fill(Palette.accent)
+                    .shadow(color: Palette.accent.opacity(0.45), radius: hover && !busy ? 8 : 5, y: 2)
+                Image(systemName: "square.and.arrow.down").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    .offset(y: -1)
+                if busy {
+                    Circle().stroke(Palette.accent.opacity(0.2), lineWidth: 2.5).padding(-5)
+                    TimelineView(.animation(paused: updater.progress != nil || reduceMotion)) { tl in
+                        let p = updater.progress
+                        let spin = p == nil && !reduceMotion ? tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.2) / 1.2 * 360 : 0
+                        Circle().trim(from: 0, to: p.map { max(0.03, $0) } ?? 0.28)
+                            .stroke(Palette.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(spin - 90)).padding(-5)
+                            .animation(p == nil ? nil : .smooth(duration: 0.5), value: p)
+                    }
+                }
+            }
+            .frame(width: 34, height: 34)
+            .scaleEffect(hover && !busy ? 1.06 : 1)
+            .frame(width: 46, height: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.14)) { hover = h } }
+        .overlay(alignment: .leading) {
+            if hover { RailTip(text: tip).fixedSize().offset(x: 54).transition(.opacity.combined(with: .offset(x: -5))) }
+        }
+        .zIndex(hover ? 1 : 0)
+        .help(busy ? tip : "Download Roomy \(version); Roomy then quits, installs it and reopens.")
+        .accessibilityLabel(busy ? tip : "Update Roomy to \(version)")
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
+    }
+}
+
+/// One module in the compact area list: its liquid icon on the selection pill, its name and count on hover.
+struct CompactAreaRow: View {
+    var route: Route
+    var selected: Bool
+    var badge: String?
+    var ns: Namespace.ID
+    var action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            LiquidIcon(route: route, size: 30, interactive: false)
+                .frame(width: 46, height: 46)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Palette.surface)
+                            .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).strokeBorder(Palette.surfaceLine, lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                            .matchedGeometryEffect(id: "sel", in: ns)
+                    } else if hover {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous).fill(Color.primary.opacity(0.05))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.14)) { hover = h } }
+        .overlay(alignment: .leading) {
+            if hover { RailTip(text: badge.map { "\(route.title) · \($0)" } ?? route.title).fixedSize().offset(x: 54).transition(.opacity.combined(with: .offset(x: -5))) }
+        }
+        .zIndex(hover ? 1 : 0)
+        .accessibilityLabel(badge.map { "\(route.title), \($0)" } ?? route.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

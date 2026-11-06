@@ -7,6 +7,15 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     var body: some View {
+        GeometryReader { g in
+            content.environment(\.windowSize, WindowSize(width: g.size.width, height: g.size.height))
+        }
+        .ignoresSafeArea()
+        .frame(minWidth: 940, minHeight: 600)
+        .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+    }
+
+    @ViewBuilder var content: some View {
         let area = Area.of(model.route)
         ZStack(alignment: .topLeading) {
             AreaGround(area: area, theme: model.theme)
@@ -55,10 +64,8 @@ struct RootView: View {
             if AppModel.scanPart(for: model.route) != nil, model.route != .care, model.footer?.route == model.route {
                 ToolbarItem { RescanButton(route: model.route) }
             }
-            ToolbarItem { UpdatePill() }
         }
-        .frame(minWidth: 1000, minHeight: 660)
-        .onAppear { model.openMainWindow = { [openWindow] in openWindow(id: "main") } }
+
     }
 
     /// Everything the orb shows on a module screen, so it updates only when one of these changes.
@@ -101,21 +108,6 @@ struct RootView: View {
         reduceMotion ? .opacity
             : .asymmetric(insertion: AnyTransition(.blurReplace).combined(with: .scale(scale: 0.985)),
                           removal: .opacity.animation(.easeOut(duration: 0.12)))
-    }
-}
-
-/// A new Roomy, as a small glass capsule in the toolbar. One click downloads it, then Roomy reopens updated.
-struct UpdatePill: View {
-    @State private var updater = AppUpdater.shared
-    var body: some View {
-        switch updater.state {
-        case .available(let v):
-            Button { updater.update() } label: { Label("Update to \(v)", systemImage: "arrow.down.circle") }
-                .help("Download Roomy \(v), then Roomy quits, installs it and reopens.")
-        case .downloading(let v), .ready(let v):
-            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Updating to \(v)…") }
-        default: EmptyView()
-        }
     }
 }
 

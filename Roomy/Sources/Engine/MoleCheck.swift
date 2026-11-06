@@ -61,13 +61,14 @@ enum MoleCheck {
     }
 
     /// Testing aid, also run by release.sh: `Roomy -RoomyMoleSelfTest installed` runs Roomy's checks on the bundled
-    /// Mole (or `-RoomyMoleSelfTest /path/to/mole` on another copy), prints the result and quits without a window.
+    /// Mole, prints the result and quits without a window. Arbitrary executable paths are refused.
     static func selfTest(_ what: String) -> Never {
         let done = DispatchSemaphore(value: 0)
         Task.detached {
             defer { done.signal() }
             func say(_ s: String) { FileHandle.standardError.write(Data(("mole self-test: " + s + "\n").utf8)) }
-            let p = what == "installed" ? Mole.path : what
+            guard what == "installed" else { say("FAILED: only the bundled engine may be tested"); return }
+            let p = Mole.path
             guard let p, let v = Mole.scriptVersion((try? String(contentsOfFile: p, encoding: .utf8)) ?? "") else { say("FAILED: no Mole found"); return }
             say("testing Mole \(v) at \(p)")
             say(await test(p, version: v).map { "FAILED: \($0)" } ?? "passed")

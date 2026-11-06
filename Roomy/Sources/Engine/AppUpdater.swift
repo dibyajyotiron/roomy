@@ -112,7 +112,9 @@ final class AppUpdater: NSObject {
         state = .available(version)
         Self.log.info("update \(version, privacy: .public) is available")
         // Testing aid: `-RoomyInstallUpdateWhenReady YES` downloads and installs at once, the same as clicking the button.
+        #if DEBUG
         if UserDefaults.standard.bool(forKey: "RoomyInstallUpdateWhenReady") { update() }
+        #endif
     }
 
     /// Downloaded and verified. Clicking already asked for it, so it installs straight away.
