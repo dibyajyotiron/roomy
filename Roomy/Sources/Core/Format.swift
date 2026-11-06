@@ -24,7 +24,12 @@ enum Paths {
     static let support: URL = {
         let folder = Bundle.main.bundleIdentifier == "app.roomy.v2" ? "Roomy v2" : "Roomy"
         let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(folder)
-        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+           attrs[.type] as? FileAttributeType == .typeDirectory,
+           (attrs[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: u.path)
+        }
         return u
     }()
 }

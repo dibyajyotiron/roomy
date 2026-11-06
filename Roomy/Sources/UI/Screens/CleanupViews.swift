@@ -337,7 +337,7 @@ struct SlimmingView: View {
     }
 }
 
-/// A separate manual Trash action, with confirmation. Normal Mole Clean may also empty Trash.
+/// A separate manual Trash action, with confirmation. Normal cleanup keeps the Trash.
 struct TrashCard: View {
     @Environment(AppModel.self) var model
     @State private var bytes: Int64?
@@ -374,13 +374,18 @@ struct TrashCard: View {
 
     func empty() async {
         emptying = true
-        let items = Paths.children(Self.trash)
         if model.safeMode {
             model.flash("Safe mode: the Trash wasn't emptied. It holds \(Fmt.bytes(bytes)).")
         } else {
-            var failed = 0
-            for i in items { do { try FileManager.default.removeItem(atPath: i) } catch { failed += 1 } }
-            model.snap.history.insert(HistoryEntry(date: Date(), title: "Emptied the Trash", bytes: bytes ?? 0, items: items.count - failed, simulated: false,
+            let result: TrashRemoval.Result
+            do { result = try TrashRemoval.empty(home: HOME) }
+            catch {
+                model.flash("The Trash couldn't be opened safely. Nothing was emptied.")
+                emptying = false
+                return
+            }
+            let failed = result.failed
+            model.snap.history.insert(HistoryEntry(date: Date(), title: "Emptied the Trash", bytes: bytes ?? 0, items: result.removed, simulated: false,
                                                    failures: failed > 0 ? ["\(failed) item\(failed == 1 ? "" : "s") couldn't be deleted (in use or locked)"] : nil), at: 0)
             model.snap.disk = ExtrasEngine.disk()
             model.save()

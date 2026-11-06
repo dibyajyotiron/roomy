@@ -4,10 +4,14 @@ set -eu
 cd "$(dirname "$0")/.."
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/roomy-security-build.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
-swiftc -module-cache-path "$WORK/module-cache" -swift-version 5 -parse-as-library Roomy/Sources/Core/Shell.swift Roomy/Sources/Engine/MoleWhitelist.swift Roomy/Sources/Engine/MoleTrashGuard.swift Tests/SecurityChecks.swift -o "$WORK/checks"
+swiftc -module-cache-path "$WORK/module-cache" -swift-version 5 -parse-as-library Roomy/Sources/Core/Shell.swift Roomy/Sources/Engine/MoleWhitelist.swift Roomy/Sources/Engine/MoleTrashGuard.swift Roomy/Sources/Engine/CodeIdentity.swift Roomy/Sources/Engine/FanInstallation.swift Roomy/Sources/Engine/TrashRemoval.swift Tests/SecurityChecks.swift -o "$WORK/checks"
 "$WORK/checks"
 python3 -I -B -m unittest discover -s Tests -p 'test_*.py'
 xcrun swiftc -module-cache-path "$WORK/module-cache" scripts/verify-release.swift -o "$WORK/verify"
 "$WORK/verify" --self-test
 
 sh Tests/fan/check-fan-helper.sh
+
+sh Tests/fan/check-install-boundary.sh
+
+sh Tests/check-runtime.sh

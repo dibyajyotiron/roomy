@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.6
+
+- Security: constrain subprocess environments and cached cleanup commands, and use only the bundled cleaning engine.
+- Remove production diagnostic paths that accepted arbitrary executables or exported local data.
+- Verify a root-private copy of the running app before installing the fan helper; restrict and synchronize its internal watcher.
+- Prevent cleanup from using cached administrator authorization. Preserve credential stores, synced files and wget's HSTS state.
+- Empty Trash without following symlinked folders; protect credentials and other accounts in native cleanup.
+- Enable Hardened Runtime for ad-hoc builds; remove unused preview/debug dependencies and restrict local scan-history permissions.
+- Add security regression tests. Fan control requires authorizing the new helper once after updating.
+
 ## 0.2.5
 
 - Activity's Memory view holds still: its two panels keep one height, set by the window, instead of growing and

@@ -49,6 +49,8 @@ final class Fans {
     func checkHelper() {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: Self.helperPath),
+              attrs[.type] as? FileAttributeType == .typeRegular,
+              ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0o777) & 0o022 == 0,
               (attrs[.ownerAccountID] as? NSNumber)?.intValue == 0,
               ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o4000 != 0 else { helper = .missing; return }
         // Ready only when it's this build's helper and it lets this exact build set speeds; after an update it's allowed again once.
@@ -76,10 +78,9 @@ final class Fans {
     func installHelper() async {
         busy = true; problem = nil
         guard let me = CodeIdentity.ownCDHash(), CodeIdentity.isHash(me) else { busy = false; problem = "Roomy's signature couldn't be read, so fan control can't be allowed."; return }
-        let src = Self.bundledHelper.replacingOccurrences(of: "'", with: "'\\''")
-        // The helper, and the one Roomy build it takes speeds from (hex only, so the command can't carry anything else).
-        let cmd = "mkdir -p /Library/PrivilegedHelperTools && /usr/bin/install -o root -g wheel -m 4755 '\(src)' '\(Self.helperPath)'"
-            + " && /usr/bin/printf '%s\\n' '\(me)' > '\(Self.allowPath)' && /usr/sbin/chown root:wheel '\(Self.allowPath)' && /bin/chmod 644 '\(Self.allowPath)'"
+        guard let cmd = FanInstallation.command(bundle: Bundle.main.bundlePath, callerHash: me) else {
+            busy = false; problem = "Roomy's helper couldn't be verified."; return
+        }
         let ok = await Self.asAdmin(cmd, prompt: "Roomy wants to install a small helper that can only change your Mac's fan speed.")
         busy = false
         checkHelper()
@@ -99,7 +100,8 @@ final class Fans {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.helperPath)
         p.arguments = ["auto"]
-        try? p.run()
+        p.environment = Shell.baseEnvironment
+        guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
 

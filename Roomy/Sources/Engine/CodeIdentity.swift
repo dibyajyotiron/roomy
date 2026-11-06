@@ -6,6 +6,20 @@ import Security
 /// signature still checks out right now. With ad-hoc signing the identity is the code-directory hash (cdhash), so it
 /// names one build: after a Roomy update, fan control is allowed again once.
 enum CodeIdentity {
+    /// Resource scripts are executable code too: check the sealed bundle against the running
+    /// executable before handing its bundled engine the app's filesystem access.
+    static func ownBundleIsValid() -> Bool {
+        guard let hash = ownCDHash(), isHash(hash) else { return false }
+        var code: SecStaticCode?
+        var requirement: SecRequirement?
+        guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &code) == errSecSuccess,
+              let code,
+              SecRequirementCreateWithString("cdhash H\"\(hash)\"" as CFString, [], &requirement) == errSecSuccess,
+              let requirement else { return false }
+        return SecStaticCodeCheckValidity(code,
+            SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckNestedCode | kSecCSCheckAllArchitectures), requirement) == errSecSuccess
+    }
+
     /// The cdhash of a valid, running program, as lowercase hex; nil if it isn't signed or its signature doesn't
     /// check out at this moment (tampered with, or its pages no longer match).
     static func cdhash(of code: SecCode) -> String? {

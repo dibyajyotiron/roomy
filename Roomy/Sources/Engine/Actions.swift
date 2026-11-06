@@ -77,7 +77,11 @@ enum Actions {
                 rep.fail(t.path, why); continue
             }
             if !allowApps, t.command == nil, isAppPath(Paths.expand(t.path)) { rep.fail(t.path, "Only Uninstaller removes apps"); continue }
-            if let cmd = t.command, let exe = cmd.first {
+            if let supplied = t.command {
+                let target = Paths.expand(t.path)
+                guard !isOffLimits(target), (try? safety.validateTrashTarget(target)) != nil,
+                      let cmd = CleanupCommand.validated(supplied, path: target, tool: t.aiTool, worktree: t.requiresCleanWorktree),
+                      let exe = cmd.first else { rep.fail(t.path, "Unrecognized or unsafe cleanup command"); continue }
                 let r: Shell.Result
                 if exe == "git", let directory = t.directory {
                     r = await GitInspection.run(at: directory, Array(cmd.dropFirst()), timeout: 900)
@@ -92,7 +96,7 @@ enum Actions {
             guard FileManager.default.fileExists(atPath: p) || (try? FileManager.default.destinationOfSymbolicLink(atPath: p)) != nil else {
                 rep.alreadyGone.append(t.path); continue
             }
-            guard !isOffLimits(p) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
+            guard !isOffLimits(p), !isOffLimits((p as NSString).resolvingSymlinksInPath) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
             do {
                 try PathSafety.validate(p)
                 try safety.validateTrashTarget(p)
