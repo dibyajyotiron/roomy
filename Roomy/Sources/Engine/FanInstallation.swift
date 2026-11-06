@@ -17,7 +17,6 @@ enum FanInstallation {
         stage=$(/usr/bin/mktemp -d "$base/.roomy-install.XXXXXXXX")
         trap '/bin/rm -rf "$stage"' EXIT
         /usr/bin/ditto \(Shell.quote(bundle)) "$stage/Roomy.app"
-        /usr/sbin/chown -R -P root:wheel "$stage/Roomy.app"
         [ ! -L "$stage/Roomy.app/Contents" ]
         [ ! -L "$stage/Roomy.app/Contents/MacOS" ]
         [ ! -L "$stage/Roomy.app/Contents/MacOS/roomy-fan" ]

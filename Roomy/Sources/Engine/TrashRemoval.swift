@@ -42,9 +42,15 @@ enum TrashRemoval {
         var info = stat()
         guard fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { throw POSIXError(.EIO) }
         if info.st_mode & S_IFMT == S_IFDIR {
+            var parentInfo = stat()
+            guard fstat(parent, &parentInfo) == 0, info.st_dev == parentInfo.st_dev else { throw POSIXError(.EXDEV) }
             let child = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             guard child >= 0 else { throw POSIXError(.EACCES) }
             defer { close(child) }
+            var opened = stat()
+            guard fstat(child, &opened) == 0, opened.st_ino == info.st_ino, opened.st_dev == info.st_dev else {
+                throw POSIXError(.EACCES)
+            }
             for entry in try children(child) { try remove(entry, in: child) }
             guard unlinkat(parent, name, AT_REMOVEDIR) == 0 else { throw POSIXError(.EIO) }
         } else {
