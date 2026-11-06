@@ -353,6 +353,7 @@ final class ProcessFeed: @unchecked Sendable {
         let generation = self.generation
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
+            p.environment = Shell.baseEnvironment
             p.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
             p.arguments = ["-P", "-L", "1", "-x", "-J", "bytes_in,bytes_out"]
             let pipe = Pipe()
@@ -379,6 +380,7 @@ final class ProcessFeed: @unchecked Sendable {
 
     private func launch(_ exe: String, _ args: [String], _ handler: @escaping (String) -> Void) -> Process? {
         let p = Process()
+        p.environment = Shell.baseEnvironment
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = args
         let pipe = Pipe()
@@ -479,6 +481,7 @@ final class ProcessFeed: @unchecked Sendable {
         guard Date().timeIntervalSince(pathsAt) > 10 else { return }
         pathsAt = Date()
         let p = Process()
+        p.environment = Shell.baseEnvironment
         p.executableURL = URL(fileURLWithPath: "/bin/ps")
         p.arguments = ["-Ao", "pid=,comm="]
         let pipe = Pipe()

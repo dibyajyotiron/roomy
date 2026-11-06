@@ -3,10 +3,12 @@ import AppKit
 
 @main
 struct RoomyApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
 
     init() {
         if let what = UserDefaults.standard.string(forKey: "RoomyMoleSelfTest") { MoleCheck.selfTest(what) }
+        _model = State(initialValue: AppModel())
+        #if DEBUG
         if let id = UserDefaults.standard.string(forKey: "RoomyLeftoverProbe") { LeftoverFinder.probe(id) }
         if let since = UserDefaults.standard.string(forKey: "RoomyReadCleanLog") { Mole.readCleanLogTest(since) }
         if let out = UserDefaults.standard.string(forKey: "RoomyStartupProbe") { StartupEngine.probe(to: out, fullList: UserDefaults.standard.string(forKey: "RoomyStartupDump")) }
@@ -17,6 +19,7 @@ struct RoomyApp: App {
             let dark = UserDefaults.standard.bool(forKey: "RoomyRenderDark")
             DispatchQueue.main.async { MainActor.assumeIsolated { RoomRender.run(to: dir, dark: dark) } }
         }
+        #endif
         // Testing aid: `open Roomy.app --args -RoomyAppearance light` (or dark) overrides the system appearance.
         switch UserDefaults.standard.string(forKey: "RoomyAppearance") {
         case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)

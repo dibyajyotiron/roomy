@@ -12,6 +12,42 @@ struct SecurityChecks {
             guard condition else { throw NSError(domain: "SecurityChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
             checks += 1
         }
+        let maliciousEnv = ["PATH": root.path, "BASH_ENV": root.appendingPathComponent("startup").path,
+                            "ENV": "/unexpected", "DYLD_INSERT_LIBRARIES": "/unexpected", "NODE_OPTIONS": "--require /unexpected",
+                            "MOLE_SKIP_PROTECTION": "1", "GIT_CONFIG_COUNT": "999", "LANG": "en_US.UTF-8"]
+        let controlled = Shell.environment(from: maliciousEnv)
+        try expect(controlled["BASH_ENV"] == nil && controlled["DYLD_INSERT_LIBRARIES"] == nil && controlled["NODE_OPTIONS"] == nil
+                   && controlled["MOLE_SKIP_PROTECTION"] == nil && controlled["GIT_CONFIG_COUNT"] == nil,
+                   "Child environment must discard execution and safety overrides")
+        try expect(controlled["PATH"] == Shell.searchPath && Shell.which("bash") == "/bin/bash", "System executables must win PATH resolution")
+        let startupMarker = root.appendingPathComponent("startup-ran")
+        try Data("/usr/bin/touch '\(startupMarker.path)'\n".utf8).write(to: root.appendingPathComponent("startup"))
+        _ = await Shell.run("/bin/bash", ["-c", "true"], environment: controlled)
+        try expect(!fm.fileExists(atPath: startupMarker.path), "BASH_ENV must not execute during a scan")
+        try expect(CleanupCommand.validated(["sh", "-c", "touch marker"], path: root.path, tool: "codex", worktree: false) == nil,
+                   "Cached scan data must not execute arbitrary commands")
+        try expect(CleanupCommand.validated(["npm", "uninstall", "-g", "@openai/codex"], path: root.path, tool: "codex", worktree: false)
+                   == ["npm", "--ignore-scripts", "uninstall", "-g", "--", "@openai/codex"], "Uninstall must disable package lifecycle scripts")
+        try expect(CleanupCommand.validated(["git", "worktree", "remove", root.path], path: root.path, tool: nil, worktree: true)
+                   == ["git", "worktree", "remove", "--", root.path], "Worktree removal must bind the reviewed path and end options")
+        try expect(FanInstallation.command(bundle: root.path, callerHash: "bad; command") == nil, "Helper install must reject invalid identity")
+        let fakeHome = root.appendingPathComponent("home")
+        let fakeTrash = fakeHome.appendingPathComponent(".Trash")
+        let untouched = root.appendingPathComponent("untouched")
+        try fm.createDirectory(at: fakeHome, withIntermediateDirectories: false)
+        try Data("keep".utf8).write(to: untouched)
+        try fm.createSymbolicLink(at: fakeTrash, withDestinationURL: root)
+        var rejectedTrash = false
+        do { _ = try TrashRemoval.empty(home: fakeHome.path) } catch { rejectedTrash = true }
+        try expect(rejectedTrash && fm.fileExists(atPath: untouched.path), "A symlinked Trash root must never be emptied")
+        try fm.removeItem(at: fakeTrash)
+        try fm.createDirectory(at: fakeTrash, withIntermediateDirectories: false)
+        try fm.createSymbolicLink(at: fakeTrash.appendingPathComponent("link"), withDestinationURL: root)
+        try fm.createDirectory(at: fakeTrash.appendingPathComponent("nested"), withIntermediateDirectories: false)
+        try Data("discard".utf8).write(to: fakeTrash.appendingPathComponent("nested/file"))
+        let emptyResult = try TrashRemoval.empty(home: fakeHome.path)
+        try expect(emptyResult.removed == 2 && emptyResult.failed == 0 && fm.fileExists(atPath: untouched.path),
+                   "Trash empty must delete nested entries and links, never link targets")
         let cleanEnv = GitInspection.environment(from: ["HOME": root.path, "PATH": "/usr/bin:/bin", "GIT_DIR": "/wrong",
             "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.fsmonitor", "GIT_CONFIG_VALUE_0": "/unexpected",
             "BASH_ENV": "/unexpected", "ENV": "/unexpected", "BASH_FUNC_echo%%": "() { unexpected; }"])

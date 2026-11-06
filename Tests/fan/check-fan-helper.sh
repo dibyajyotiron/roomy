@@ -27,14 +27,7 @@ check "$(log)" "set 80 auto" "the fans must go back to macOS when the allowed Ro
 check "$(ls "$W/marks" | grep -c watch || true)" "0" "the watcher must clean up after itself"
 
 : > "$W/marks/fans.log"
-cat > "$W/twice.sh" <<SH
-"$W/roomy-fan" set 60 && "$W/roomy-fan" set 90 && sleep 1
-SH
-# /bin/sh isn't the allowed build, so allow it for this one check: two sets from one process, one watcher.
-# "; :" keeps the shell from replacing itself with the command, so the caller really is the shell.
-SH_HASH=$(/bin/sh -c "\"$W/roomy-fan\" whoami; :")
-printf '%s\n' "$SH_HASH" > "$W/allow"; : > "$W/marks/fans.log"
-/bin/sh "$W/twice.sh"
+"$W/standin" "$W/roomy-fan" 0 twice
 sleep 1
 check "$(log)" "set 60 set 90 auto" "two speed changes from one Roomy must leave one watcher that hands back once"
 
@@ -44,4 +37,6 @@ printf 'x; rm -rf /\n' > "$W/allow"
 check "$("$W/standin" "$W/roomy-fan" 0 exit set 80 2>/dev/null)" " exit=13" "an allow file that isn't a hash must refuse"
 rm "$W/allow"
 check "$("$W/standin" "$W/roomy-fan" 0 exit set 80 2>/dev/null)" " exit=13" "no allow file must refuse"
+check "$("$W/standin" "$W/roomy-fan" 0 exit watch 1 2>/dev/null)" " exit=64" "invalid watcher PID must refuse"
+check "$("$W/standin" "$W/roomy-fan" 0 exit watch $$ 2>/dev/null)" " exit=13" "untrusted caller must not create a root watcher"
 echo "Fan helper: $n passed (test build, no root, no fans touched)"

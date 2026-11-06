@@ -3,14 +3,24 @@ import Foundation
 /// Runs command-line tools for the engines. GUI apps start with a minimal PATH, so the usual
 /// Homebrew and system locations are added. stdout and stderr are merged, like the CLI tools print them.
 enum Shell {
-    static let searchPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    // System tools cannot be shadowed by a writable Homebrew directory or an inherited PATH.
+    static let searchPath = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 
-    static var baseEnvironment: [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = searchPath + ":" + (env["PATH"] ?? "")
+    static func environment(from original: [String: String]) -> [String: String] {
+        // Start with an allowlist: BASH_ENV, exported functions, DYLD_*, interpreter options,
+        // Git overrides and Mole's test/protection overrides must never reach child processes.
+        var env = original.filter { ["LANG", "LC_ALL", "LC_CTYPE", "TZ"].contains($0.key) }
+        env["PATH"] = searchPath
         env["HOME"] = NSHomeDirectory()
+        env["USER"] = NSUserName()
+        env["LOGNAME"] = NSUserName()
+        env["TMPDIR"] = NSTemporaryDirectory()
+        env["HOMEBREW_NO_ANALYTICS"] = "1"
+        env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
         return env
     }
+
+    static var baseEnvironment: [String: String] { environment(from: ProcessInfo.processInfo.environment) }
 
     static func which(_ tool: String) -> String? {
         for dir in searchPath.split(separator: ":") {
@@ -65,6 +75,21 @@ enum Shell {
                 cont.resume(returning: Result(output: String(decoding: data, as: UTF8.self), status: p.terminationStatus))
             }
         }
+    }
+}
+
+/// Cached scan data is untrusted. It may describe these operations, never executable code.
+enum CleanupCommand {
+    static func validated(_ command: [String], path: String, tool: String?, worktree: Bool) -> [String]? {
+        if worktree, path.hasPrefix("/"), command == ["git", "worktree", "remove", path] {
+            return ["git", "worktree", "remove", "--", path]
+        }
+        if tool == "copilot", command == ["brew", "uninstall", "copilot-cli"] { return command }
+        let packages = ["openclaw": "openclaw", "claudecode": "@anthropic-ai/claude-code", "codex": "@openai/codex"]
+        if let tool, let package = packages[tool], command == ["npm", "uninstall", "-g", package] {
+            return ["npm", "--ignore-scripts", "uninstall", "-g", "--", package]
+        }
+        return nil
     }
 }
 

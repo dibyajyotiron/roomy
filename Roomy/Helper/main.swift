@@ -50,15 +50,21 @@ func allowedCaller() -> String? {
 }
 
 /// Starts the watcher for Roomy process `pid`, once per Roomy process, detached into its own session.
-func startWatcher(for pid: pid_t) {
+func startWatcher(for pid: pid_t) -> Bool {
     let mark = markDir + "/app.roomy.fan.watch.\(pid)"
-    if let s = try? String(contentsOfFile: mark, encoding: .utf8), let w = pid_t(s.trimmingCharacters(in: .whitespacesAndNewlines)), kill(w, 0) == 0 { return }
+    if let s = try? String(contentsOfFile: mark, encoding: .utf8), let w = pid_t(s.trimmingCharacters(in: .whitespacesAndNewlines)), kill(w, 0) == 0, CodeIdentity.cdhash(pid: w) == CodeIdentity.ownCDHash() { return true }
+    var ready: [Int32] = [0, 0]
+    guard pipe(&ready) == 0 else { return false }
+    defer { close(ready[0]); close(ready[1]) }
     var attr: posix_spawnattr_t?
     posix_spawnattr_init(&attr)
     posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
     var files: posix_spawn_file_actions_t?
     posix_spawn_file_actions_init(&files)
     for fd: Int32 in 0...2 { posix_spawn_file_actions_addopen(&files, fd, "/dev/null", fd == 0 ? O_RDONLY : O_WRONLY, 0) }
+    // The child must authenticate its live parent before that short-lived parent exits.
+    posix_spawn_file_actions_adddup2(&files, ready[1], 3)
+    if ready[0] != 3 { posix_spawn_file_actions_addclose(&files, ready[0]) }
     var child: pid_t = 0
     let args = [helperPath, "watch", String(pid)]
     let argv = args.map { strdup($0) } + [nil]
@@ -66,13 +72,23 @@ func startWatcher(for pid: pid_t) {
     #if ROOMY_FAN_DRY
     envp = ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("ROOMY_FAN_") }.map { strdup("\($0.key)=\($0.value)") } + [nil]
     #endif
-    if posix_spawn(&child, helperPath, &files, &attr, argv, envp) == 0 {
+    let spawned = posix_spawn(&child, helperPath, &files, &attr, argv, envp) == 0
+    if spawned {
         try? String(child).write(toFile: mark, atomically: true, encoding: .utf8)
     }
     argv.forEach { free($0) }
     envp.forEach { free($0) }
     posix_spawn_file_actions_destroy(&files)
     posix_spawnattr_destroy(&attr)
+    guard spawned else { return false }
+    var event = pollfd(fd: ready[0], events: Int16(POLLIN), revents: 0)
+    var byte: UInt8 = 0
+    guard poll(&event, 1, 5000) > 0, read(ready[0], &byte, 1) == 1, byte == 1 else {
+        kill(child, SIGTERM)
+        try? FileManager.default.removeItem(atPath: mark)
+        return false
+    }
+    return true
 }
 
 /// Blocks until process `pid` exits (returns at once if it's already gone).
@@ -100,7 +116,12 @@ case ("set", 2):
         fail("Only the Roomy you allowed fan control for can set a speed. Open Roomy and allow fan control again.", 13)
     }
 case ("watch", 2):
-    guard pid_t(args[1]) != nil else { fail("usage: roomy-fan watch <pid>", 64) }
+    guard let pid = pid_t(args[1]), pid > 1 else { fail("usage: roomy-fan watch <pid>", 64) }
+    // Only this helper can start its internal root watcher, never an arbitrary local process.
+    guard CodeIdentity.cdhash(pid: caller) == CodeIdentity.ownCDHash() else { fail("Internal command", 13) }
+    #if !ROOMY_FAN_DRY
+    guard getuid() == 0 else { fail("Internal command", 13) }
+    #endif
 #if ROOMY_FAN_DRY
 case ("whoami", 1):
     print(CodeIdentity.cdhash(pid: caller) ?? "none"); exit(0)
@@ -112,6 +133,11 @@ default:
 guard becomeRoot() else { fail("roomy-fan must be installed as root to control the fans", 77) }
 
 if args[0] == "watch", let pid = pid_t(args[1]) {
+    var ready: UInt8 = 1
+    guard write(3, &ready, 1) == 1 else { exit(1) }
+    close(3)
+    // Wait for the set operation to finish before resetting, even if Roomy exits during startup.
+    waitForExit(of: caller)
     waitForExit(of: pid)
     _ = fansAuto()
     try? FileManager.default.removeItem(atPath: markDir + "/app.roomy.fan.watch.\(pid)")
@@ -121,5 +147,8 @@ if args[0] == "watch", let pid = pid_t(args[1]) {
 if args[0] == "auto" { exit(fansAuto() ? 0 : 1) }
 let pct = Int(args[1])!
 // The watcher starts before the fans change, so there's never a moment they're pinned without one.
-startWatcher(for: caller)
+guard startWatcher(for: caller) else {
+    _ = fansAuto()
+    fail("Could not start the fan safety watcher; fans remain automatic", 1)
+}
 exit(fansSet(pct) ? 0 : 1)

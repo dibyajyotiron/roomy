@@ -27,7 +27,7 @@ mkdir -p "$OUT"
 touch "$OUT/.metadata_never_index"
 if [ ! -L "$ROOT/Roomy/build" ]; then rm -rf "$ROOT/Roomy/build"; fi
 ln -sfn "$OUT" "$ROOT/Roomy/build"
-OPT="-Onone -g"
+OPT="-Onone -g -D DEBUG"
 VERSION=${ROOMY_VERSION:-$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.0.0)}
 # The build number Sparkle compares comes from the version (0.1.0 → 100, 1.2.3 → 10203), so it only ever goes up,
 # whatever the git history looks like.
@@ -146,9 +146,10 @@ if [ -n "$MOLE_HOME" ] && [ -x "$MOLE_HOME/bin/mole" ]; then
     [ ! -f "$MOLE_HOME/$marker" ] || cp "$MOLE_HOME/$marker" "$APP/Contents/Resources/mole/$marker"
   done
   cp "$MOLE_HOME/LICENSE" "$APP/Contents/Resources/mole/LICENSE"
+  python3 -I scripts/harden-mole.py "$APP/Contents/Resources/mole"
   echo "  bundled Mole $(basename "$MOLE_HOME")"
 else
-  echo "  warning: Mole isn't installed (brew install mole), so this build relies on a Mole on the user's PATH"
+  echo "  warning: bundled Mole missing; scans and cleanup will be unavailable"
 fi
 # Licenses travel with the app: GPL-3.0 for Roomy (it includes code ported from Mole), plus the notices it carries.
 mkdir -p "$APP/Contents/Resources/Licenses"
@@ -170,22 +171,24 @@ xattr -cr "$APP"
 # Use an available development identity, otherwise the normal ad-hoc signature. Never reduce the designated
 # requirement to a bundle identifier: another binary can claim that identifier. Ad-hoc builds may need privacy
 # permissions granted again after an update; retaining that identity boundary is intentional.
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')
+IDENTITY=${ROOMY_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development|Developer ID Application/ {print $2; exit}')}
 if [ "$LOCAL_V2" = 1 ]; then IDENTITY=""; fi
 for go in "$APP"/Contents/Resources/mole/libexec/bin/*-go; do
-  [ -f "$go" ] && codesign --force --sign "${IDENTITY:--}" ${IDENTITY:+--options runtime} "$go" >/dev/null 2>&1
+  [ -f "$go" ] && codesign --force --sign "${IDENTITY:--}" --options runtime "$go" >/dev/null 2>&1
 done
 # Sparkle's parts, inside out, with the same identity as the app (Sparkle checks that an update is signed the same way).
 SPK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+ENTITLEMENTS="$ROOT/Roomy/Resources/AdHoc.entitlements"
+[ -z "$IDENTITY" ] || ENTITLEMENTS="$ROOT/Roomy/Resources/Release.entitlements"
 for part in "$SPK/Autoupdate" "$SPK/Updater.app" "$APP/Contents/Frameworks/Sparkle.framework"; do
-  codesign --force --sign "${IDENTITY:--}" ${IDENTITY:+--options runtime} "$part" >/dev/null
+  codesign --force --sign "${IDENTITY:--}" --options runtime --entitlements "$ENTITLEMENTS" "$part" >/dev/null
 done
 if [ -n "$IDENTITY" ]; then
   codesign --force --options runtime --sign "$IDENTITY" -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
-  codesign --force --options runtime --sign "$IDENTITY" "$APP" >/dev/null 2>&1
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$APP" >/dev/null 2>&1
 else
-  codesign --force --sign - -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
-  codesign --force --sign - "$APP" >/dev/null 2>&1
+  codesign --force --options runtime --sign - -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP" >/dev/null 2>&1
 fi
 codesign --verify --deep --strict "$APP"
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister

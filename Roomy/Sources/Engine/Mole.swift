@@ -4,8 +4,7 @@ import Foundation
 /// Every preview sets MOLE_DRY_RUN=1 on top of `--dry-run`, so scanning never changes anything.
 enum Mole {
     /// Roomy ships its own tested copy of Mole inside the app, so nothing needs installing, and uses only that copy:
-    /// Mole changes only with a Roomy release (see MoleCheck). A Mole installed with Homebrew is the fallback for
-    /// development builds made without one.
+    /// Mole changes only with a Roomy release (see MoleCheck). Missing bundled code disables the engine.
     static let bundled = Bundle.main.resourcePath.map { $0 + "/mole/bin/mole" }
     struct Engine { var path: String; var version: String? }
     private static let lock = NSLock()
@@ -27,7 +26,7 @@ enum Mole {
         let fm = FileManager.default
         func version(_ p: String) -> String? { scriptVersion((try? String(contentsOfFile: p, encoding: .utf8)) ?? "") }
         if let p = bundled, fm.isExecutableFile(atPath: p) { return Engine(path: p, version: version(p)) }
-        return Shell.which("mo").map { Engine(path: $0, version: version($0)) }
+        return nil // A missing bundled engine must not fall back to code on a writable PATH.
     }
 
     /// The `VERSION="1.61.0"` line of Mole's entry script.
@@ -37,13 +36,16 @@ enum Mole {
     static let config = HOME + "/.config/mole"
 
     static var env: [String: String] {
-        var e = Shell.baseEnvironment
+        var e = GitInspection.environment()
+        e["GIT_CONFIG_COUNT"] = "2"
+        e["GIT_CONFIG_KEY_0"] = "core.fsmonitor"; e["GIT_CONFIG_VALUE_0"] = "false"
+        e["GIT_CONFIG_KEY_1"] = "core.hooksPath"; e["GIT_CONFIG_VALUE_1"] = "/dev/null"
         e["MOLE_DRY_RUN"] = "1"; e["NO_COLOR"] = "1"; e["MO_NO_OPLOG"] = "1"
         return e
     }
 
     static func run(_ args: [String], timeout: TimeInterval = 900, input: String? = nil, dryRun: Bool = true, using: String? = nil) async -> String {
-        guard let path = using ?? path else { return "" }
+        guard let path = using ?? path, path == Self.path, CodeIdentity.ownBundleIsValid() else { return "" }
         var e = env
         if !dryRun { e.removeValue(forKey: "MOLE_DRY_RUN") }
         let r = await Shell.run(path, args, environment: e, timeout: timeout, input: input)
@@ -199,9 +201,14 @@ enum Mole {
     }
 
     private static func runCleanNow() async -> CleanRun {
-        guard let path else { return CleanRun() }
-        var e = Shell.baseEnvironment
-        e["NO_COLOR"] = "1"
+        guard let path, CodeIdentity.ownBundleIsValid() else {
+            var failed = CleanRun()
+            failed.failed = [("Roomy.app", "Roomy's bundled engine could not be authenticated. Reinstall Roomy before cleaning.")]
+            return failed
+        }
+        var e = env
+        e.removeValue(forKey: "MOLE_DRY_RUN")
+        e.removeValue(forKey: "MO_NO_OPLOG")
         let started = Date().addingTimeInterval(-2)
         let r = await Shell.run(path, ["clean"], environment: e, timeout: 1800)
         var run = readOperations(since: started)
