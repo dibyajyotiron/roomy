@@ -4,8 +4,7 @@ import Foundation
 /// Every preview sets MOLE_DRY_RUN=1 on top of `--dry-run`, so scanning never changes anything.
 enum Mole {
     /// Roomy ships its own tested copy of Mole inside the app, so nothing needs installing, and uses only that copy:
-    /// Mole changes only with a Roomy release (see MoleCheck). A Mole installed with Homebrew is the fallback for
-    /// development builds made without one.
+    /// Mole changes only with a Roomy release (see MoleCheck). Missing bundled code disables the engine.
     static let bundled = Bundle.main.resourcePath.map { $0 + "/mole/bin/mole" }
     struct Engine { var path: String; var version: String? }
     private static let lock = NSLock()
@@ -27,7 +26,7 @@ enum Mole {
         let fm = FileManager.default
         func version(_ p: String) -> String? { scriptVersion((try? String(contentsOfFile: p, encoding: .utf8)) ?? "") }
         if let p = bundled, fm.isExecutableFile(atPath: p) { return Engine(path: p, version: version(p)) }
-        return Shell.which("mo").map { Engine(path: $0, version: version($0)) }
+        return nil // A missing bundled engine must not fall back to code on a writable PATH.
     }
 
     /// The `VERSION="1.61.0"` line of Mole's entry script.
@@ -37,13 +36,16 @@ enum Mole {
     static let config = HOME + "/.config/mole"
 
     static var env: [String: String] {
-        var e = Shell.baseEnvironment
+        var e = GitInspection.environment()
+        e["GIT_CONFIG_COUNT"] = "2"
+        e["GIT_CONFIG_KEY_0"] = "core.fsmonitor"; e["GIT_CONFIG_VALUE_0"] = "false"
+        e["GIT_CONFIG_KEY_1"] = "core.hooksPath"; e["GIT_CONFIG_VALUE_1"] = "/dev/null"
         e["MOLE_DRY_RUN"] = "1"; e["NO_COLOR"] = "1"; e["MO_NO_OPLOG"] = "1"
         return e
     }
 
     static func run(_ args: [String], timeout: TimeInterval = 900, input: String? = nil, dryRun: Bool = true, using: String? = nil) async -> String {
-        guard let path = using ?? path else { return "" }
+        guard let path = using ?? path, path == Self.path, CodeIdentity.ownBundleIsValid() else { return "" }
         var e = env
         if !dryRun { e.removeValue(forKey: "MOLE_DRY_RUN") }
         let r = await Shell.run(path, args, environment: e, timeout: timeout, input: input)
@@ -64,7 +66,8 @@ enum Mole {
 
     static func cleanPreview(using: String? = nil) async -> CleanPreview {
         // The Trash is on the keep list for the preview too, so it's never counted as something Clean removes.
-        let out = await MoleWhitelist.keeping(MoleWhitelist.alwaysKept) { await run(["clean", "--dry-run"], timeout: 1200, using: using) }
+        // If it can't be protected the preview is empty, and Clean (which checks again) won't run either.
+        let out = (try? await protectingTrash { await run(["clean", "--dry-run"], timeout: 1200, using: using) }.get()) ?? ""
         var pv = CleanPreview()
         var section: String?
         for raw in out.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -175,24 +178,37 @@ enum Mole {
         var count: Int { max(removed.count, reported ?? 0) }
     }
 
-    /// Runs Mole's own user-level clean, the same pass its preview showed. Without a terminal Mole runs
-    /// non-interactively and skips anything that needs an administrator. Its protections, keep list and in-use
-    /// checks apply at the moment of removal, and every path it removes, skips or fails is read back from its
-    /// operations log, so Roomy reports exactly what happened.
-    /// Whether a `mo clean` (from Roomy, Mole's app or a Terminal) is running right now.
-    static func cleanRunning() async -> Bool {
-        await Shell.run("/usr/bin/pgrep", ["-if", "mole.*bin/clean.sh|mo clean"], timeout: 5).ok
+    /// Run the bundled engine's normal clean. The preview is informational; Mole decides what is eligible now.
+    /// Roomy does not edit its keep list, provide per-file exclusions or perform an additional cleanup pass.
+    /// Runs one Mole scan or clean with your Trash on Mole's keep list (see MoleTrashGuard). Fails closed.
+    static func protectingTrash<T>(_ body: () async -> T) async -> Result<T, MoleTrashGuard.Failure> {
+        await MoleTrashGuard.protecting(file: URL(fileURLWithPath: config).appendingPathComponent("whitelist"),
+                                        backup: Paths.support.appendingPathComponent("mole-whitelist.backup"),
+                                        trash: HOME + "/.Trash",
+                                        defaults: {
+            guard let mo = path else { throw MoleTrashGuard.Failure(reason: "Mole isn't available.") }
+            let root = URL(fileURLWithPath: mo).resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+            let script = (try? String(contentsOf: root.appendingPathComponent("libexec/lib/core/base.sh"), encoding: .utf8)) ?? ""
+            return try MoleTrashGuard.defaults(fromBaseScript: script, home: HOME)
+        }, body)
     }
 
-    /// Runs Mole's clean. `keeping` are paths you unticked in the review: Mole leaves them alone this time.
-    static func runClean(keeping: [String] = []) async -> CleanRun {
-        await MoleWhitelist.keeping(MoleWhitelist.alwaysKept + keeping) { await runCleanNow() }
+    static func runClean() async -> CleanRun {
+        switch await protectingTrash({ await runCleanNow() }) {
+        case .success(let run): return run
+        case .failure(let f): var run = CleanRun(); run.failed = [(HOME + "/.Trash", f.reason)]; return run
+        }
     }
 
     private static func runCleanNow() async -> CleanRun {
-        guard let path else { return CleanRun() }
-        var e = Shell.baseEnvironment
-        e["NO_COLOR"] = "1"
+        guard let path, CodeIdentity.ownBundleIsValid() else {
+            var failed = CleanRun()
+            failed.failed = [("Roomy.app", "Roomy's bundled engine could not be authenticated. Reinstall Roomy before cleaning.")]
+            return failed
+        }
+        var e = env
+        e.removeValue(forKey: "MOLE_DRY_RUN")
+        e.removeValue(forKey: "MO_NO_OPLOG")
         let started = Date().addingTimeInterval(-2)
         let r = await Shell.run(path, ["clean"], environment: e, timeout: 1800)
         var run = readOperations(since: started)

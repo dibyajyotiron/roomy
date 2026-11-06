@@ -392,7 +392,8 @@ private struct TopApps: View {
         let apps = Array(all.sorted { byCPU ? $0.cpu > $1.cpu : $0.mem > $1.mem }.prefix(5))
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Text("Using the most").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("Apps using the most").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .help("Each app with all its processes together (helpers, renderers, web pages), so one app here can be several rows in Activity Monitor.")
                 Spacer()
                 sortButton("Memory", on: !byCPU).frame(width: 72, alignment: .trailing)
                 sortButton("CPU", on: byCPU).frame(width: 52, alignment: .trailing)
@@ -408,6 +409,9 @@ private struct TopApps: View {
                 HStack(spacing: 8) {
                     if let p = a.path { FileIcon(path: p, size: 16) } else { Image(systemName: "gearshape").font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 16) }
                     Text(a.name.hasPrefix("com.apple.WebKit") ? "Web pages" : a.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        .help(a.processes > 1 ? "\(a.processes) processes together" : "1 process")
+                    if a.processes > 1 { Text("\(a.processes)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
+                        .padding(.horizontal, 4).padding(.vertical, 1).background(Capsule().fill(Color.primary.opacity(0.07))) }
                     Spacer(minLength: 6)
                     Text(Fmt.bytes(a.mem)).font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary).frame(width: 72, alignment: .trailing)
                     Text(String(format: "%.1f", cpu)).font(.system(size: 12, weight: cpu >= 80 ? .semibold : .regular)).monospacedDigit()
@@ -422,6 +426,17 @@ private struct TopApps: View {
                     .accessibilityLabel("Actions for \(a.name)")
                 }
                 .frame(height: 24)
+            }
+            if !byCPU && !Demo.on {
+                MemoryBreakdown(m: model.monitor.sample.memory).padding(.top, 6)
+                let advice = model.monitor.memoryAdvice
+                if !advice.idle.isEmpty {
+                    Button(action: { UserDefaults.standard.set(Resource.memory.rawValue, forKey: "activityResource"); open() }) {
+                        Text("\(advice.idle.count) open app\(advice.idle.count == 1 ? "" : "s") not in use hold \(Fmt.bytes(advice.idleTotal)) · Review")
+                            .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain).padding(.top, 4).help("Open Activity's memory advice")
+                }
             }
         }
         .padding(10)
@@ -532,5 +547,32 @@ private struct TotalsRow: View {
             Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Where all of the Mac's memory is right now, in parts that add up exactly to its RAM: apps, compressed, macOS
+/// (wired: the kernel, drivers and the GPU), cached files and free. The app list above shows footprints, like Activity
+/// Monitor, which count each app's compressed and swapped-out memory at full size, so those add up to more.
+private struct MemoryBreakdown: View {
+    var m: MemoryReading
+    var body: some View {
+        let parts: [(String, Int64, Color)] = [("Apps", m.app, Palette.accent), ("Compressed", m.compressed, Palette.warn),
+                                               ("macOS", m.wired, .gray), ("Cached files", m.cached, Palette.ok.opacity(0.7)), ("Free", m.free, .secondary.opacity(0.25))]
+        let total = max(1, parts.reduce(0) { $0 + $1.1 })
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { g in
+                HStack(spacing: 1.5) {
+                    ForEach(parts, id: \.0) { p in
+                        if p.1 > 0 { RoundedRectangle(cornerRadius: 2).fill(p.2).frame(width: max(2, g.size.width * CGFloat(p.1) / CGFloat(total))) }
+                    }
+                }
+            }
+            .frame(height: 6).clipShape(Capsule())
+            Text(parts.filter { $0.1 > 0 }.map { "\($0.0) \(Fmt.bytes($0.1))" }.joined(separator: " · ")
+                 + (m.swapUsed > 0 ? " · \(Fmt.bytes(m.swapUsed)) swapped to disk" : ""))
+                .font(.system(size: 10.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .help("Your \(Fmt.bytes(m.total)) of memory right now. App sizes above are footprints, as Activity Monitor shows them: they count each app's compressed and swapped-out memory at full size, so together they can add up to more than your memory.")
+        .accessibilityElement(children: .combine)
     }
 }

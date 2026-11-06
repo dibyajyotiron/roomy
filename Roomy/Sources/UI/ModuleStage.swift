@@ -10,7 +10,7 @@ extension Route {
         case .artifacts: "Build output in your projects that a build makes again."
         case .aiCare: "Caches and old versions of AI tools, and what they keep that you may not need."
         case .mail: "Copies of attachments Mail downloaded, which stay on your mail server."
-        case .trash: "What's in your Trash. Checkup never empties it: it's your undo."
+        case .trash: "What's in your Trash. Mole's normal Clean also empties it unless it's on your Mole keep list."
         case .systemData: "The parts of System Data you can do something about."
         case .uninstaller: "Remove an app together with everything it left in your Library."
         case .updates: "Newer versions of apps you installed with Homebrew."

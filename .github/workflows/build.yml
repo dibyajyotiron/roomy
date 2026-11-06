@@ -26,6 +26,10 @@ jobs:
           persist-credentials: false
       - name: Fetch the Mole version Roomy is pinned to
         run: scripts/fetch-mole.sh "$RUNNER_TEMP/mole/$(cat MOLE_VERSION)"
+      - name: Check safety with isolated fixtures
+        run: |
+          Packages/MoleCore/Tools/check.sh
+          sh scripts/check-security.sh
       - name: Build and package
         run: MOLE_HOME="$RUNNER_TEMP/mole/$(cat MOLE_VERSION)" Roomy/release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

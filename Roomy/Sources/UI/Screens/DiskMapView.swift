@@ -5,6 +5,7 @@ import SwiftUI
 /// running app depends on, and those say why.
 struct DiskMapView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @State private var stack: [LensNode] = []
     @State private var kids: [LensNode] = []
     @State private var hover: LensNode?
@@ -21,7 +22,7 @@ struct DiskMapView: View {
             if model.snap.lens == nil { NotScannedYet(); Spacer() } else {
                 path.padding(.horizontal, 28).padding(.bottom, 10)
                 HStack(alignment: .top, spacing: 18) {
-                    list.frame(minWidth: 320, idealWidth: 360, maxWidth: 400)
+                    list.frame(minWidth: ws.compact ? 260 : 320, idealWidth: ws.compact ? 280 : 360, maxWidth: 400)
                     VStack(spacing: 8) {
                         BubbleField(items: visible, picked: Set(picked.keys), onOpen: open, onBack: stack.count > 1 ? back : nil, hover: $hover, tip: tip)
                             .contextMenu { if let k = hover { menu(k) } }

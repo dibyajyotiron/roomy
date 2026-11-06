@@ -3,6 +3,7 @@ import Pow
 
 struct UninstallerView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @State private var selected: String?
     @State private var query = ""
     @State private var sort = 0
@@ -34,7 +35,7 @@ struct UninstallerView: View {
                             }
                         }
                     }
-                    .frame(width: 300)
+                    .frame(width: ws.compact ? 236 : 300)
                     if let a = current { detail(a).id(a.path).transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.16)), removal: .identity)) }
                 }
                 .padding(.horizontal, 28).padding(.bottom, 20)

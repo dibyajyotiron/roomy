@@ -37,3 +37,7 @@ PRODUCT.md
 *.key
 *private*key*
 sparkle_private*
+.local-build/
+
+# Python test/import caches
+__pycache__/

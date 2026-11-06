@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.2.6
+
+- Security: constrain subprocess environments and cached cleanup commands, and use only the bundled cleaning engine.
+- Remove production diagnostic paths that accepted arbitrary executables or exported local data.
+- Verify a root-private copy of the running app before installing the fan helper; restrict and synchronize its internal watcher.
+- Prevent cleanup from using cached administrator authorization. Preserve credential stores, synced files and wget's HSTS state.
+- Empty Trash without following symlinked folders; protect credentials and other accounts in native cleanup.
+- Enable Hardened Runtime for ad-hoc builds; remove unused preview/debug dependencies and restrict local scan-history permissions.
+- Add security regression tests. Fan control requires authorizing the new helper once after updating.
+
+## 0.2.5
+
+- Activity's Memory view holds still: its two panels keep one height, set by the window, instead of growing and
+  shrinking every couple of seconds as the readings changed. "On the SSD" is always listed ("None" without swap).
+- Memory advice reads plainly: one list of apps worth acting on, one line each. Idle apps say "Idle 2 h" (with a "+"
+  when Roomy only knows since it started watching) and keep their Quit button; apps macOS has compressed say how much
+  it has "packed away". The web tip names the site holding the most ("Web pages hold 2.6 GB, 2.5 GB of it YouTube")
+  instead of listing processes as tabs, and no longer shows tiny helper processes.
+
+## 0.2.4
+
+- Updates look like this now: when a new Roomy is out, a round download button appears in the sidebar, just above the
+  disk. Click it and a ring fills while it downloads, then Roomy installs it and reopens.
+- Memory advice on Activity's Memory view: why memory is tight (how much is compressed or on the SSD), the apps macOS
+  has squeezed most, apps that are open but not in use with what quitting each frees (and a Quit button), and tips
+  for web tabs and apps that run virtual machines. The menu bar points to it when idle apps hold memory.
+- App memory matches Activity Monitor: the menu bar measures each app's footprint, not its resident memory, so an app
+  running a virtual machine (OrbStack) shows its real size. The list says it's by app, with each app's process count,
+  and a bar under it shows where all your memory is (apps, compressed, macOS, cached files, free), which adds up to
+  your RAM.
+- Fixed: choosing Auto after Cool or Max now really hands the fans back to macOS. Roomy used to clear only the
+  override, leaving the fans held at their last speed; fans left stuck that way are reset too.
+- Activity is first in Health, then Protection.
+- Fan control is locked to Roomy. The fan helper (the one part of Roomy that runs as root) now sets a speed only
+  when the exact Roomy build you allowed asks for it, checked against that build's code signature at that moment;
+  anything else on your Mac is refused. Handing the fans back to macOS stays open to anyone, since it only undoes a
+  speed. After a Roomy update, Activity and the menu bar show "Update Fan Control…": one password and it's allowed
+  for the new build.
+- The fans never stay pinned without Roomy. When Roomy sets a speed, the helper starts a small watcher for that Roomy;
+  the moment Roomy exits, however it exits (quit, crash or force quit), the fans go back to macOS.
+- Fan-helper checks run on every build: on a test build with no root and no fans, they confirm other programs and
+  other builds are refused, and that a crash hands the fans back.
+
+## 0.2.3
+
+- The round button's loader is a ring of liquid light around it, flowing while a clean runs and filling as a scan
+  goes, instead of a spinner inside. The button keeps its colour while it works, its glass is flatter and softer, and
+  the glow around it is subtler and more blended.
+- Security fixes from an independent review:
+  - Your Trash stays protected, and now fails safe: Roomy puts only `~/.Trash` on Mole's keep list for each scan and
+    clean, reads it back to confirm, and if it can't, Mole doesn't run. The list is restored exactly afterwards.
+  - Checkup runs Mole's own clean as it is: no per-item exclusions it couldn't guarantee, and no extra cleaning pass
+    of Roomy's own. Its review shows Mole's findings; Mole checks everything again when it cleans.
+  - Signing: Full Disk Access is tied to each exact build of Roomy, so no other app can borrow it. macOS may ask you
+    to grant it again after an update.
+  - The Terminal install checks a release manifest signed with Roomy's release key (it needs Apple's Command Line
+    Tools for that, and installs nothing without them), stages the new app and keeps the old one until it's in place.
+  - Git is run with repository hooks switched off, Homebrew names are validated before they reach Terminal, and a
+    file that can't be read fully is never counted as a duplicate.
+  - AI Cleanup checks again, just before removing anything, that the tool isn't running or updating, and worktrees
+    need a fresh, clean `git status`.
+  - Mole is fetched from a pinned source with checked helper digests, and a release is published only after its
+    uploaded files and the exact commit's CI are verified.
+- An item that's already gone when you clean (another clean removed it) counts as done, not as a failure, and every
+  list drops what no longer exists.
+- Old Claude Code extensions for VS Code are offered only once VS Code itself no longer uses them.
+
 ## 0.2.2
 
 - About, copyright and credits now name only what Roomy actually uses: Mole, Stats, Sparkle, Pow and Poly Haven.

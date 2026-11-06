@@ -36,26 +36,11 @@ enum CleanupEngine {
         let pv = await Mole.cleanPreview()
         var mapped = Mole.categories(pv)
         let left = mapped.removeValue(forKey: "leftovers")
-        // Belt and braces: whatever Mole reports, nothing in your Trash is ever offered for cleaning.
-        for k in mapped.keys { mapped[k]?.items.removeAll { AppModel.inTrash($0.path) } }
-        async let docker = dockerCategory()
         var cats: [CleanCategory] = titles.map { t in
             let m = mapped[t.key] ?? Mole.Mapped()
             return CleanCategory(key: t.key, title: t.title, note: t.note, safe: true,
                                  items: m.items.filter { $0.bytes > 0 }.sorted { $0.bytes > $1.bytes },
                                  held: m.held.map { var h = $0; h.held = plainReason(h.held ?? ""); return h }, checkedEmpty: m.checked)
-        }
-        let d = await docker
-        if let i = cats.firstIndex(where: { $0.key == "dockerCache" }) {
-            // Mole's "Docker storage" summary counts volumes as reclaimable; Roomy's stricter rules replace it.
-            cats[i].items = d.items; cats[i].kept = d.kept; cats[i].skipped = d.skipped; cats[i].safe = false
-            cats[i].held = cats[i].held.filter { !$0.name.lowercased().contains("docker") }
-        }
-        // Roomy's own rules: app update downloads and sandboxed apps' caches, wherever Mole doesn't already clean.
-        let ours = await RoomyRules.scan(skipping: cats.flatMap(\.items).filter { $0.byMole == true }.map(\.path))
-        if let i = cats.firstIndex(where: { $0.key == "userCache" }) {
-            cats[i].items = (cats[i].items + ours.items).sorted { $0.bytes > $1.bytes }
-            cats[i].held += ours.held
         }
         let fda = FullDiskAccess.granted
         for i in cats.indices where ["mailAttachments", "trashBins"].contains(cats[i].key) && cats[i].items.isEmpty && !fda {
@@ -71,41 +56,6 @@ enum CleanupEngine {
             }
         }
         return Output(categories: cats, leftovers: leftovers, cacheHolders: pv.holders, protected: pv.protected, moleTotal: pv.total)
-    }
-
-    /// Only what Docker itself calls cache. Volumes hold databases and files, containers hold their own
-    /// changes and tagged images are what you run, so none of them is ever offered for cleaning.
-    static func dockerCategory() async -> CleanCategory {
-        var c = CleanCategory(key: "dockerCache", title: "Docker", note: "", safe: false)
-        let df = await Shell.run("docker", ["system", "df", "--format", "{{json .}}"], timeout: 30)
-        guard df.ok else {
-            c.skipped = Shell.which("docker") == nil ? "Docker isn't installed." : "Docker isn't running. Start it and scan again."
-            return c
-        }
-        var rows: [String: [String: Any]] = [:]
-        for line in df.output.split(separator: "\n") {
-            if let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any], let t = o["Type"] as? String { rows[t] = o }
-        }
-        if let bc = rows["Build Cache"], let b = parseSize(bc["Reclaimable"] as? String), b > 0 {
-            c.items.append(CleanItem(path: "docker:build-cache", name: "Unused build cache", bytes: b,
-                                     note: "Layers no current build uses. Builds take longer the first time afterwards.",
-                                     review: true, command: ["docker", "builder", "prune", "-f"]))
-        }
-        let dang = await Shell.run("docker", ["images", "-f", "dangling=true", "--format", "{{.Size}}"], timeout: 30)
-        let sizes = dang.output.split(whereSeparator: \.isWhitespace).compactMap { parseSize(String($0)) }
-        if sizes.reduce(0, +) > 0 {
-            c.items.append(CleanItem(path: "docker:dangling-images", name: "Dangling image layers", bytes: sizes.reduce(0, +), count: sizes.count,
-                                     note: "Untagged layers left by rebuilds. Tagged images stay.", review: true, command: ["docker", "image", "prune", "-f"]))
-        }
-        let why = ["Local Volumes": "Your containers' databases and files. Deleting a volume deletes that data, so Roomy never offers it. Manage volumes in Docker.",
-                   "Containers": "Each container keeps its own changes. Remove containers in Docker when you're sure you don't need them.",
-                   "Images": "Images you pulled or built. This isn't cache: remove unused ones in Docker."]
-        for t in ["Local Volumes", "Containers", "Images"] {
-            guard let r = rows[t] else { continue }
-            c.kept.append(CleanItem(path: "docker:" + t.lowercased(), name: "Docker " + t.lowercased(), bytes: parseSize(r["Size"] as? String) ?? 0,
-                                    note: "\(r["TotalCount"] ?? "?") total, \(r["Active"] ?? "?") in use", why: why[t]))
-        }
-        return c
     }
 
     /// Only files in your own folders can be selected. Anything else (Homebrew's databases, app data, dot folders)

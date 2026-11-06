@@ -34,6 +34,10 @@ if [ "$MOLE_BUNDLED" != "$MOLE_PIN" ]; then
   echo "✗ This build bundles Mole ${MOLE_BUNDLED:-(none)}, but MOLE_VERSION says $MOLE_PIN. Install Mole $MOLE_PIN or update MOLE_VERSION after testing." >&2
   exit 1
 fi
+[ "$(cat "$APP/Contents/Resources/mole/ROOMY_MOLE_COMMIT" 2>/dev/null || true)" = "$(cat MOLE_COMMIT)" ] \
+  || { echo "✗ Release Mole must come from scripts/fetch-mole.sh with the repository's pinned source and helper hashes" >&2; exit 1; }
+cmp MOLE_CHECKSUMS "$APP/Contents/Resources/mole/ROOMY_MOLE_CHECKSUMS" \
+  || { echo "✗ Bundled Mole checksum provenance differs from MOLE_CHECKSUMS" >&2; exit 1; }
 SELFTEST=$("$APP/Contents/MacOS/Roomy" -RoomyMoleSelfTest installed 2>&1 | tail -n 1)
 case "$SELFTEST" in
   *passed) echo "› Mole $MOLE_PIN bundled and passes Roomy's checks" ;;
@@ -45,10 +49,10 @@ if [ -n "${ROOMY_SIGN_IDENTITY:-}" ]; then
   for go in "$APP"/Contents/Resources/mole/libexec/bin/*-go; do codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$go"; done
   SPK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
   for part in "$SPK/Autoupdate" "$SPK/Updater.app" "$APP/Contents/Frameworks/Sparkle.framework"; do
-    codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$part"
+    codesign --force --options runtime --entitlements "$ROOT/Roomy/Resources/Release.entitlements" --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$part"
   done
   codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" -i app.roomy.fan "$APP/Contents/MacOS/roomy-fan"
-  codesign --force --options runtime --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$APP"
+  codesign --force --options runtime --entitlements "$ROOT/Roomy/Resources/Release.entitlements" --timestamp --sign "$ROOMY_SIGN_IDENTITY" "$APP"
   codesign --verify --deep --strict "$APP"
 fi
 if [ -n "${ROOMY_SIGN_IDENTITY:-}" ] && [ -n "${ROOMY_NOTARY_PROFILE:-}" ]; then
@@ -63,6 +67,7 @@ rm -rf "$DIST" && mkdir -p "$DIST"
 ZIP="$DIST/Roomy-$VERSION.zip"
 PKG="$DIST/Roomy-$VERSION.pkg"
 WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 
 echo "› Update archive"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
@@ -108,23 +113,18 @@ if [ -n "$uid" ] && pgrep -x Roomy >/dev/null 2>&1; then
 fi
 exit 0
 SH
-cat > "$WORK/scripts/postinstall" <<'SH'
-#!/bin/sh
-# Gives Roomy.app to the person who installed it, so Roomy's own updates can replace it without asking for a password.
-user=$(stat -f %Su /dev/console)
-if [ -n "$user" ] && [ "$user" != "root" ] && [ -d "$2/Roomy.app" ]; then chown -R "$user":staff "$2/Roomy.app"; fi
-exit 0
-SH
-chmod 755 "$WORK/scripts/preinstall" "$WORK/scripts/postinstall"
+# Keep package-installed applications root-owned. A postinstall chown on the public Applications
+# path can race a local replacement and grant ownership of an unrelated root-owned tree.
+chmod 755 "$WORK/scripts/preinstall"
 pkgbuild --root "$WORK/root" --component-plist "$WORK/component.plist" --install-location /Applications \
   --identifier app.roomy.Roomy.pkg --version "$VERSION" --scripts "$WORK/scripts" "$WORK/Roomy-component.pkg" >/dev/null
 cp LICENSE "$WORK/resources/LICENSE.txt"
 cat > "$WORK/resources/welcome.html" <<HTML
 <html><body style="font-family: -apple-system; font-size: 13px; line-height: 1.5">
 <h2 style="margin-top:0">Roomy $VERSION</h2>
-<p>Make room on your Mac, and see exactly what goes before it goes.</p>
+<p>Make room on your Mac, and review Mole's findings before you clean.</p>
 <p>This installs Roomy in your Applications folder. Mole, the cleaning engine Roomy uses, comes with it, so there's nothing else to install.</p>
-<p>Roomy keeps itself up to date: when a new version is out, an Update button appears in the toolbar. Click it and Roomy downloads the update and reopens updated.</p>
+<p>Roomy keeps itself up to date: when a new version is out, a round download button appears in the sidebar, just above the disk. Click it and Roomy downloads the update and reopens updated.</p>
 <p>Free software under the GNU General Public License v3.0.</p>
 </body></html>
 HTML
@@ -160,3 +160,13 @@ echo "$COMMIT" > "$DIST/BUILD_COMMIT"
 echo "✓ $PKG"
 echo "✓ $ZIP"
 cat "$DIST/Roomy-$VERSION.sha256"
+
+# Bind both distribution formats, the appcast, source commit, and Mole pin with the existing update key.
+# CI has no private key and therefore produces no publishable signed manifest.
+if [ -f "$DIST/appcast.xml" ]; then
+  python3 -I scripts/release-validation.py manifest "$DIST"
+  MANIFEST_SIG=$("$ROOT/Vendor/Sparkle/bin/sign_update" --account roomy "$DIST/release-manifest.json")
+  printf '%s\n' "$MANIFEST_SIG" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' > "$DIST/release-manifest.sig"
+  [ -s "$DIST/release-manifest.sig" ] || { echo "✗ No manifest signature was produced" >&2; exit 1; }
+  python3 -I scripts/release-validation.py verify "$DIST" --version "$VERSION" --commit "$(git rev-parse HEAD)"
+fi

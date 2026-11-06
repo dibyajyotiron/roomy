@@ -55,7 +55,13 @@ enum ExtrasEngine {
         guard let h = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? h.close() }
         var hasher = SHA256()
-        while let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        do {
+            while true {
+                let chunk = try h.read(upToCount: 1 << 20) ?? Data()
+                if chunk.isEmpty { break }
+                hasher.update(data: chunk)
+            }
+        } catch { return nil }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
@@ -123,6 +129,7 @@ enum ExtrasEngine {
     /// Updates one Homebrew app the way `brew upgrade --cask` does, without a Terminal. Installers that ask for an
     /// administrator password can't do that here, so they report it and the caller offers Terminal instead.
     static func upgradeCask(_ name: String) async -> UpgradeResult {
+        guard Shell.validBrewToken(name) else { return .failed("The Homebrew cask name is invalid.") }
         var env = Shell.baseEnvironment
         env["HOMEBREW_NO_AUTO_UPDATE"] = "1"; env["HOMEBREW_NO_ANALYTICS"] = "1"; env["HOMEBREW_NO_ENV_HINTS"] = "1"
         env["SUDO_ASKPASS"] = "/usr/bin/false"   // never hang on a password prompt nobody can see
@@ -136,10 +143,15 @@ enum ExtrasEngine {
 
     /// Opens Terminal running the update, for installers that need your password.
     static func upgradeInTerminal(_ name: String) {
-        let f = FileManager.default.temporaryDirectory.appendingPathComponent("Roomy update \(name).command")
-        try? "#!/bin/zsh\nbrew upgrade --cask \(name)\necho\necho 'Done. You can close this window.'\n".write(to: f, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
-        NSWorkspace.shared.open(f)
+        guard Shell.validBrewToken(name) else { return }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Roomy-update-\(UUID().uuidString)")
+        let file = folder.appendingPathComponent("Update.command")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            try "#!/bin/zsh\nbrew upgrade --cask \(Shell.quote(name))\necho\necho 'Done. You can close this window.'\n".write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+            NSWorkspace.shared.open(file)
+        } catch { return }
     }
 
     static func disk() -> DiskInfo {

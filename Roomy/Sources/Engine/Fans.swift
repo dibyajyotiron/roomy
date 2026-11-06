@@ -14,6 +14,8 @@ final class Fans {
     }
 
     static let helperPath = "/Library/PrivilegedHelperTools/app.roomy.fan"
+    /// The Roomy build allowed to set speeds (its cdhash), root-owned, written when you allow fan control.
+    static let allowPath = "/Library/PrivilegedHelperTools/app.roomy.fan.client"
     static var bundledHelper: String { Bundle.main.bundlePath + "/Contents/MacOS/roomy-fan" }
 
     var fans: [SMC.Fan] = []
@@ -47,9 +49,15 @@ final class Fans {
     func checkHelper() {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: Self.helperPath),
+              attrs[.type] as? FileAttributeType == .typeRegular,
+              ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0o777) & 0o022 == 0,
               (attrs[.ownerAccountID] as? NSNumber)?.intValue == 0,
               ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o4000 != 0 else { helper = .missing; return }
-        helper = fm.contentsEqual(atPath: Self.helperPath, andPath: Self.bundledHelper) ? .ready : .outdated
+        // Ready only when it's this build's helper and it lets this exact build set speeds; after an update it's allowed again once.
+        let allowed = (try? String(contentsOfFile: Self.allowPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowOwner = (try? fm.attributesOfItem(atPath: Self.allowPath))?[.ownerAccountID] as? NSNumber
+        helper = fm.contentsEqual(atPath: Self.helperPath, andPath: Self.bundledHelper) && allowOwner?.intValue == 0
+            && allowed != nil && allowed == CodeIdentity.ownCDHash() ? .ready : .outdated
     }
 
     func apply(_ p: Preset) async {
@@ -69,8 +77,10 @@ final class Fans {
     /// Installs roomy-fan as root (macOS asks for an administrator's password). The only thing it can do is set fan speed.
     func installHelper() async {
         busy = true; problem = nil
-        let src = Self.bundledHelper.replacingOccurrences(of: "'", with: "'\\''")
-        let cmd = "mkdir -p /Library/PrivilegedHelperTools && /usr/bin/install -o root -g wheel -m 4755 '\(src)' '\(Self.helperPath)'"
+        guard let me = CodeIdentity.ownCDHash(), CodeIdentity.isHash(me) else { busy = false; problem = "Roomy's signature couldn't be read, so fan control can't be allowed."; return }
+        guard let cmd = FanInstallation.command(bundle: Bundle.main.bundlePath, callerHash: me) else {
+            busy = false; problem = "Roomy's helper couldn't be verified."; return
+        }
         let ok = await Self.asAdmin(cmd, prompt: "Roomy wants to install a small helper that can only change your Mac's fan speed.")
         busy = false
         checkHelper()
@@ -80,7 +90,7 @@ final class Fans {
     func removeHelper() async {
         if preset != .auto { await apply(.auto) }
         busy = true
-        _ = await Self.asAdmin("/bin/rm -f '\(Self.helperPath)'", prompt: "Roomy wants to remove its fan helper.")
+        _ = await Self.asAdmin("/bin/rm -f '\(Self.helperPath)' '\(Self.allowPath)'", prompt: "Roomy wants to remove its fan helper.")
         busy = false
         checkHelper()
     }
@@ -90,7 +100,8 @@ final class Fans {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: Self.helperPath)
         p.arguments = ["auto"]
-        try? p.run()
+        p.environment = Shell.baseEnvironment
+        guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
 

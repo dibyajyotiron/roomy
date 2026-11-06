@@ -1,7 +1,7 @@
 import Foundation
 import MoleCore
 
-/// Everything that changes the disk goes through here.
+/// Selected native cleanup actions. Checkup delegates separately to Mole.
 /// - Safe mode (the default) only records what would happen.
 /// - Files go to the Trash, never straight to deletion, after MoleCore's path-safety checks.
 /// - Things a tool manages are removed with that tool's own command (`docker builder prune`, `git worktree remove`…).
@@ -11,6 +11,8 @@ enum Actions {
         var bytes: Int64
         var command: [String]? = nil
         var directory: String? = nil
+        var aiTool: String? = nil
+        var requiresCleanWorktree = false
     }
 
     struct Report {
@@ -19,6 +21,8 @@ enum Actions {
         /// Each failure as "path — reason".
         var failures: [String] = []
         var failedPaths: [String] = []
+        /// Listed but already gone when the clean started (an earlier clean or the app removed it): done, not failed.
+        var alreadyGone: [String] = []
         /// Each removal as "path — size", so History can show exactly what went.
         var done: [String] = []
         var simulated: Bool
@@ -68,16 +72,31 @@ enum Actions {
             return rep
         }
         for t in targets {
+            if let tool = t.aiTool, let why = await AICareEngine.heldNow(tool) { rep.fail(t.path, why); continue }
+            if t.requiresCleanWorktree, let why = GitInspection.cleanWorktreeProblem(await GitInspection.status(at: Paths.expand(t.path))) {
+                rep.fail(t.path, why); continue
+            }
             if !allowApps, t.command == nil, isAppPath(Paths.expand(t.path)) { rep.fail(t.path, "Only Uninstaller removes apps"); continue }
-            if let cmd = t.command, let exe = cmd.first {
-                let r = await Shell.run(exe, Array(cmd.dropFirst()), timeout: 900, directory: t.directory)
+            if let supplied = t.command {
+                let target = Paths.expand(t.path)
+                guard !isOffLimits(target), (try? safety.validateTrashTarget(target)) != nil,
+                      let cmd = CleanupCommand.validated(supplied, path: target, tool: t.aiTool, worktree: t.requiresCleanWorktree),
+                      let exe = cmd.first else { rep.fail(t.path, "Unrecognized or unsafe cleanup command"); continue }
+                let r: Shell.Result
+                if exe == "git", let directory = t.directory {
+                    r = await GitInspection.run(at: directory, Array(cmd.dropFirst()), timeout: 900)
+                } else {
+                    r = await Shell.run(exe, Array(cmd.dropFirst()), timeout: 900, directory: t.directory)
+                }
                 if r.ok { rep.removed += t.bytes; rep.count += 1; rep.done.append("\(Paths.short(t.path)) — \(Fmt.bytes(t.bytes))") } else { rep.fail(t.path, "\(exe) didn't finish: \(r.output.trimmed.suffix(120))") }
                 continue
             }
             let p = Paths.expand(t.path)
-            guard !isOffLimits(p) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
-            // Roomy's own rules check again now: the app may have opened, or an update started, since the scan.
-            if let why = await RoomyRules.heldNow(p) { rep.fail(t.path, why); continue }
+            // Checked first: a list can be older than the disk, and a missing item is nothing to remove, not a failure.
+            guard FileManager.default.fileExists(atPath: p) || (try? FileManager.default.destinationOfSymbolicLink(atPath: p)) != nil else {
+                rep.alreadyGone.append(t.path); continue
+            }
+            guard !isOffLimits(p), !isOffLimits((p as NSString).resolvingSymlinksInPath) else { rep.fail(t.path, "Roomy never removes this folder as a whole"); continue }
             do {
                 try PathSafety.validate(p)
                 try safety.validateTrashTarget(p)

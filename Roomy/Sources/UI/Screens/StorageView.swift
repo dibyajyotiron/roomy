@@ -158,6 +158,7 @@ struct Triangle: Shape {
 
 struct StorageView: View {
     @Environment(AppModel.self) var model
+    @Environment(\.windowSize) var ws
     @State private var sel = "sysdata"
     @State private var expanded: Set<String> = []
 
@@ -178,7 +179,7 @@ struct StorageView: View {
                 }
                 .padding(.horizontal, 28)
                 HStack(alignment: .top, spacing: 14) {
-                    segmentList(r).frame(width: 250)
+                    segmentList(r).frame(width: ws.compact ? 236 : 250)
                     if let seg = r.segments.first(where: { $0.key == sel }) { detail(seg, r).id(seg.key).transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 4)).animation(.easeOut(duration: 0.2)), removal: .identity)) }
                 }
                 .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 20)
@@ -214,15 +215,17 @@ struct StorageView: View {
                         HStack(spacing: 10) {
                             RoundedRectangle(cornerRadius: 3).fill(SegmentColor.of(s.key)).frame(width: 10, height: 10)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(s.name).font(.system(size: 13, weight: .medium))
+                                // One line, never broken mid-word: a long name shrinks a little, then truncates.
+                                Text(s.name).font(.system(size: 13, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
                                 Text(s.needsAccess ? (model.hasFullDiskAccess ? "Scan again to measure" : "Needs Full Disk Access") : s.locked ? "Locked · part of macOS" : s.key == "sysdata" ? "\(Fmt.bytes(r.hiddenBytes)) \(r.measuredWithAccess == true ? "only macOS can see" : "not visible yet")" : "\(s.children.count) item\(s.children.count == 1 ? "" : "s")")
-                                    .font(.system(size: 11)).foregroundStyle(Palette.ink3)
+                                    .font(.system(size: 11)).foregroundStyle(Palette.ink3).lineLimit(1)
                             }
-                            Spacer()
-                            Text(s.bytes.map(Fmt.bytes) ?? "—").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                            .layoutPriority(1)
+                            Spacer(minLength: 4)
+                            Text(s.bytes.map(Fmt.bytes) ?? "—").font(.system(size: 13, weight: .semibold)).monospacedDigit().fixedSize()
                             Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.ink3)
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .padding(.horizontal, ws.compact ? 11 : 14).padding(.vertical, 10)
                         .background(sel == s.key ? SegmentColor.of(s.key).opacity(0.16) : .clear)
                         .contentShape(Rectangle())
                     }

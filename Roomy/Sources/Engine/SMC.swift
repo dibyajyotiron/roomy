@@ -157,18 +157,36 @@ final class SMC {
         return ok
     }
 
-    /// Hands the fans back to macOS.
+    /// Hands the fans back to macOS, the way Stats does: each fan's mode back to automatic and its target cleared while
+    /// the override is still on (Apple silicon only takes fan writes then), and only then the override off, so macOS's
+    /// thermal daemon takes over from a clean state. Clearing only the override left the fans forced at their last
+    /// target, so after Max they could stay fast. On chips without the override key (Intel, M5) the mode alone does it.
     func automatic() -> Bool {
-        if var t = read("Ftst") {
-            if t.bytes[0] == 0 { return true }
-            t.bytes[0] = 0
-            return writeRetrying(t)
+        let count = Swift.min(Int(number("FNum") ?? 0), 4)
+        var override = read("Ftst")
+        // A fan left forced with the override already off (an older Roomy cleared only the override, so Cool or Max
+        // stayed held) can't be reset: these chips take fan writes only while the override is on. Take it back for a
+        // moment, wait for macOS to let go (Stats waits 3 s too), reset the fans, then release it below.
+        if var t = override, t.bytes[0] == 0, (0..<count).contains(where: { (read(modeKey($0))?.bytes[0] ?? 0) != 0 }) {
+            t.bytes[0] = 1
+            if writeRetrying(t, attempts: 100) { usleep(3_000_000); override = t }
         }
+        let overridden = override.map { $0.bytes[0] != 0 } ?? true
         var ok = true
-        for fan in fans() where fan.manual {
-            guard var m = read(modeKey(fan.id)) else { ok = false; continue }
-            m.bytes[0] = 0
-            ok = writeRetrying(m) && ok
+        for i in 0..<count {
+            if var m = read(modeKey(i)), m.bytes[0] != 0 {
+                m.bytes[0] = 0
+                ok = (writeRetrying(m, attempts: 300, delay: 100_000) || !overridden) && ok
+            }
+            if var t = read("F\(i)Tg") {
+                if t.type == "flt " { for j in 0..<4 { t.bytes[j] = 0 } }
+                else if t.type == "fpe2" { t.bytes[0] = 0; t.bytes[1] = 0 }
+                _ = writeRetrying(t, attempts: 20)
+            }
+        }
+        if var t = override, t.bytes[0] != 0 {
+            t.bytes[0] = 0
+            ok = writeRetrying(t, attempts: 100) && ok
         }
         return ok
     }
